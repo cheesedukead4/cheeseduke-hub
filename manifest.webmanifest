@@ -1,0 +1,17 @@
+{
+  "name": "倉儲 IT 整合中心",
+  "short_name": "倉儲IT中心",
+  "description": "行事曆、專案進度與任務看板：倉儲與 IT 的工作整合在一起",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#edf0f3",
+  "theme_color": "#1b232b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>倉儲 IT 整合中心</title>
+<meta name="description" content="行事曆、專案進度與任務看板：倉儲與 IT 的工作整合在一起">
+<meta name="theme-color" content="#1b232b">
+<meta name="application-name" content="倉儲IT中心">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="倉儲IT中心">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="css/app.css">
+<script src="config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/cloud-store.js"></script>
+<script src="js/app.js" defer></script>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="wrap top-in">
+      <div class="brand">
+        <img class="mark" src="icons/icon.svg" alt="" width="34" height="34">
+        <div><b>倉儲 IT 整合中心</b><button type="button" id="sync" class="sync" title="立即同步"><i aria-hidden="true"></i><span>連線中…</span></button></div>
+      </div>
+      <nav class="tabs" aria-label="主要頁面">
+        <button type="button" data-act="nav" data-view="overview">總覽</button>
+        <button type="button" data-act="nav" data-view="calendar">行事曆</button>
+        <button type="button" data-act="nav" data-view="projects">專案</button>
+        <button type="button" data-act="nav" data-view="board">進度看板</button>
+        <button type="button" data-act="nav" data-view="users" class="admin-only">管理</button>
+      </nav>
+      <div class="top-tools">
+        <div class="seg" role="group" aria-label="類別篩選">
+          <button type="button" data-act="cat" data-cat="all">全部</button>
+          <button type="button" data-act="cat" data-cat="wh">倉儲</button>
+          <button type="button" data-act="cat" data-cat="it">IT</button>
+        </div>
+        <div class="add w-only">
+          <button type="button" class="btn primary" id="add-btn" data-act="add-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="add-menu">＋ 新增</button>
+          <div class="menu" id="add-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-act="new" data-kind="event">新增行程 <small>進出貨・會議</small></button>
+            <button type="button" role="menuitem" data-act="new" data-kind="task">新增任務 <small>待辦事項</small></button>
+            <button type="button" role="menuitem" data-act="new" data-kind="project">新增專案 <small>倉儲・IT</small></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" id="main"></main>
+  <footer class="wrap foot" id="foot"></footer>
+</div>
+
+<div class="ov drawer-ov" id="drawer" hidden></div>
+<div class="ov modal-ov" id="modal" hidden>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="m-title"></div>
+</div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
