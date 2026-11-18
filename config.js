@@ -6,9 +6,9 @@
  * WI_CLOUD.url：本 App 的 Apps Script 網頁應用程式網址（結尾 /exec），見「使用說明.md」第 2 步。
  */
 window.WI_AUTH = {
-  clientId: ''
+  clientId: '108931232819-5iv3i1uf96nhq0ihlbtq9thh17em2jn8.apps.googleusercontent.com'
 };
 
 window.WI_CLOUD = {
-  url: ''
+  url: 'https://script.google.com/macros/s/AKfycbx2EWf23Q_9Ahv6p19_4Z_GzUWk-B5hLFCgv4gbl3wMOA7U0lKvjqYE_kRz81q8AWrrnQ/exec'
 };
