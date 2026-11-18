@@ -163,9 +163,30 @@ function taskMeta(t){
 function projFolder(p){if(!p)return '';if(p.folder)return String(p.folder);const m=/資料夾：([^\n]+)/.exec(p.desc||'');return m?m[1].trim():'';}
 const whenTxt=iso=>iso?new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
 const liveReqs=pid=>E(S.requests).filter(x=>x[1].projectId===pid&&x[1].status!=='closed').sort((a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||''));
+// 留言回覆的 demo 截圖：登入後向雲端讀（reqImg），讀過的留在記憶體
+const IMGS={},imgLoading=new Set();
+const imgTag=im=>`<button type="button" class="rq-img" data-act="req-img" data-id="${esc(im.id)}" aria-label="放大截圖 ${esc(im.name||'')}"><img data-img="${esc(im.id)}" alt="${esc(im.name||'demo 截圖')}"${IMGS[im.id]?` src="${IMGS[im.id]}"`:''}></button>`;
+function loadImgs(){
+  document.querySelectorAll('img[data-img]:not([src])').forEach(el=>{
+    const id=el.dataset.img;
+    if(IMGS[id]){el.src=IMGS[id];return;}
+    if(imgLoading.has(id)||!AU||!AU.user())return;
+    imgLoading.add(id);
+    AU.api('reqImg',{id}).then(j=>{IMGS[id]='data:'+j.mime+';base64,'+j.data;document.querySelectorAll('img[data-img="'+id+'"]').forEach(x=>{x.src=IMGS[id];});})
+      .catch(()=>{document.querySelectorAll('img[data-img="'+id+'"]').forEach(x=>{x.alt='截圖讀取失敗，請按右上角同步後再試';});})
+      .finally(()=>imgLoading.delete(id));
+  });
+}
+function openImg(id){
+  if(!IMGS[id])return;
+  M={kind:'img',id,opener:document.activeElement};
+  $('#sheet').classList.add('wide');
+  $('#sheet').innerHTML=`<h2 id="m-title">demo 截圖</h2><img class="rq-big" src="${IMGS[id]}" alt="demo 截圖"><div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">關閉</button></div>`;
+  $('#modal').hidden=false;lockScroll();
+}
 function reqHTML([id,r]){
   const st=REQ[r.status]||REQ.open;
-  const replies=(r.replies||[]).map(c=>`<div class="rq-reply${c.by==='Claude'?' ai':''}"><div class="rq-who"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span></div><p>${esc(c.text)}</p></div>`).join('');
+  const replies=(r.replies||[]).map(c=>`<div class="rq-reply${c.by==='Claude'?' ai':''}"><div class="rq-who"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span></div>${c.text?`<p>${esc(c.text)}</p>`:''}${c.images&&c.images.length?`<div class="rq-imgs">${c.images.map(imgTag).join('')}</div>`:''}</div>`).join('');
   const acts=r.status==='review'?`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">核准上線</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`
     :r.status==='open'?`<button type="button" class="btn ghost" data-act="req-cancel" data-id="${esc(id)}">取消留言</button>`:'';
   return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div><p class="rq-t">${esc(r.text)}</p>${replies}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
@@ -497,6 +518,7 @@ function renderDrawer(){
   const nd=el.querySelector('.drawer');if(nd)nd.scrollTop=st;
   const ta1=el.querySelector('#rq-text');
   if(ta1&&draft&&draft.pid===id){ta1.value=draft.v;if(draft.f){ta1.focus({preventScroll:true});try{ta1.setSelectionRange(draft.a,draft.b);}catch(e){}}}
+  loadImgs();
   lockScroll();
 }
 
@@ -568,7 +590,7 @@ function openForm(kind,id,o){
   setTimeout(()=>{const f=$('#f-title');if(f){f.focus();if(!id)f.select();}},0);
 }
 function closeModal(){
-  const op=M&&M.opener;M=null;pendingImport=null;$('#modal').hidden=true;$('#sheet').innerHTML='';lockScroll();
+  const op=M&&M.opener;M=null;pendingImport=null;$('#modal').hidden=true;$('#sheet').innerHTML='';$('#sheet').classList.remove('wide');lockScroll();
   if(op&&op.isConnected)try{op.focus();}catch(e){}
 }
 function lockScroll(){document.body.classList.toggle('locked',!$('#modal').hidden||!$('#drawer').hidden);}
@@ -763,6 +785,7 @@ document.addEventListener('click',e=>{
     case 'req-approve':setReq(d.id,{status:'approved'},'已核准，Claude 下次打開這個專案時會上線');break;
     case 'req-cancel':arm(a,'再按一次確認取消',()=>setReq(d.id,{status:'closed'},'已取消這則留言'));break;
     case 'req-revise':openRevise(d.id);break;
+    case 'req-img':openImg(d.id);break;
     case 'import':{const f=$('#importFile');f.value='';f.click();break;}
   }
 });
