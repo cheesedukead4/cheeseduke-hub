@@ -376,3 +376,17 @@ html.auth-locked .app{display:none}
 .banner.bad{background:var(--bad-soft);border-color:var(--bad)}
 .banner.warn{background:var(--warn-soft);border-color:var(--warn)}
 @media (max-width:1040px){.adm{grid-template-columns:minmax(0,1fr)}}
+
+/* ---------- 給 Claude 的留言 ---------- */
+.rq-hint{font-size:12.5px;max-width:62ch}
+.rq{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:8px;background:var(--surface)}
+.rq-h{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:12px}
+.rq-t{white-space:pre-wrap;overflow-wrap:anywhere}
+.rq-reply{border-left:3px solid var(--line);padding:4px 0 4px 10px;display:grid;gap:2px;font-size:13px}
+.rq-reply.ai{border-left-color:var(--accent);background:var(--accent-soft);border-radius:0 8px 8px 0;padding-right:10px}
+.rq-reply p{white-space:pre-wrap;overflow-wrap:anywhere}
+.rq-who{font-size:12px}
+.rq-a{display:flex;flex-wrap:wrap;gap:8px}
+.rq-new{display:grid;gap:8px}
+.rq-new textarea{width:100%;min-height:72px;resize:vertical;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:14px}
+.rq-line{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}

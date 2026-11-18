@@ -7,6 +7,10 @@
  *               start, end (YYYY-MM-DD), owner, desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
  *   tasks     { id, title, projectId, status: todo|doing|review|done, priority, due, assignee, note, doneAt, ... }
  *   events    { id, title, type: inbound|outbound|inventory|it|meeting|other, date, start, end (HH:MM), projectId, location, note, ... }
+ *   requests  給 Claude 的留言 { id, projectId, text, status: open|review|approved|done|closed, replies: [{ id, by, text, at }], createdAt, createdBy }
+ *             open 待處理 → Claude 改好、給 demo 後回覆並改成 review 待你確認 → 你按「核准上線」改成 approved → Claude 上線後改成 done。
+ *             Claude 端：本機的 Claude Code hook（開發工具/claude-hub.mjs）在打開專案資料夾時讀到留言，用雲端後端的 autoReply 回覆。
+ * 專案的資料夾（folder，或說明裡的「資料夾：路徑」）用來對應 Claude 打開的資料夾。
  * 專案進度＝完成的任務數 ÷ 全部任務數；沒有任務時用 progress。
  * 權限：WIAuth.can('edit') 可以新增、修改、刪除；管理員全部都有。這是畫面權限，雲端後端只擋「不在名單的人」。
  */
@@ -25,6 +29,7 @@ const TLABEL=Object.fromEntries(TSTATUS);
 const PRIO={high:'高',mid:'中',low:'低'};
 const PRANK={high:0,mid:1,low:2};
 const ETYPE={inbound:['進貨','wh'],outbound:['出貨','wh'],inventory:['盤點','wh'],it:['IT 維運','it'],meeting:['會議','gn'],other:['其他','gn']};
+const REQ={open:['待處理','info'],review:['待你確認','warn'],approved:['已核准上線','ok'],done:['已上線','ok'],closed:['已取消','']};
 const PERMS=[{id:'edit',label:'新增與修改',desc:'可以新增、修改、刪除專案、任務與行程；沒勾的人只能查看'}];
 const PERM_LABEL=Object.fromEntries(PERMS.map(p=>[p.id,p.label]));
 const LS_PREF='wi_prefs';
@@ -55,7 +60,7 @@ const myName=()=>(AU&&AU.name())||'';
 
 /* ================= state ================= */
 const S={
-  projects:{},tasks:{},events:{},
+  projects:{},tasks:{},events:{},requests:{},
   view:'overview',cat:'all',
   calMonth:TODAY().slice(0,7),selDay:TODAY(),
   boardProject:'all',projStatus:'all',showAllDone:false,
@@ -73,7 +78,7 @@ const inCat=c=>S.cat==='all'||S.cat===c;
 
 function pullFromStore(){
   const m=kind=>{const o={};for(const r of ST.list(kind))if(r&&r.id!=null)o[r.id]=r;return o;};
-  S.projects=m('projects');S.tasks=m('tasks');S.events=m('events');
+  S.projects=m('projects');S.tasks=m('tasks');S.events=m('events');S.requests=m('requests');
 }
 async function put(coll,id,data){
   if(!canEdit()){toast('你目前只有檢視權限，無法修改資料');return false;}
@@ -155,6 +160,17 @@ function taskMeta(t){
   return bits.join(' · ');
 }
 
+function projFolder(p){if(!p)return '';if(p.folder)return String(p.folder);const m=/資料夾：([^\n]+)/.exec(p.desc||'');return m?m[1].trim():'';}
+const whenTxt=iso=>iso?new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+const liveReqs=pid=>E(S.requests).filter(x=>x[1].projectId===pid&&x[1].status!=='closed').sort((a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||''));
+function reqHTML([id,r]){
+  const st=REQ[r.status]||REQ.open;
+  const replies=(r.replies||[]).map(c=>`<div class="rq-reply${c.by==='Claude'?' ai':''}"><div class="rq-who"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span></div><p>${esc(c.text)}</p></div>`).join('');
+  const acts=r.status==='review'?`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">核准上線</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`
+    :r.status==='open'?`<button type="button" class="btn ghost" data-act="req-cancel" data-id="${esc(id)}">取消留言</button>`:'';
+  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div><p class="rq-t">${esc(r.text)}</p>${replies}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
+}
+
 /* ================= views ================= */
 function loadingHTML(){
   const st=ST.status();
@@ -203,7 +219,9 @@ function vOverview(){
   const plist=projects.filter(x=>x[1].status!=='done').sort(projSort);
   const projPanel=`<section class="panel"><div class="ph"><h3>專案進度</h3><button type="button" class="btn ghost" data-act="nav" data-view="projects">全部專案 →</button></div>
     ${plist.length?`<div class="plist">${plist.map(projRow).join('')}</div><p class="legend-note"><i></i>直線標記：依照起訖日期，今天應該完成到的位置</p>`:'<p class="empty">沒有進行中的專案。</p>'}</section>`;
-  return head+statusBanner()+kpis+`<div class="ov-grid"><div class="ov-col">${agenda}${attention}</div><div class="ov-col">${projPanel}</div></div>`;
+  const rqs=E(S.requests).filter(x=>['open','review','approved'].includes(x[1].status)&&inCat(catP(P(x[1].projectId)))).sort((a,b)=>(a[1].status==='review'?0:1)-(b[1].status==='review'?0:1)||(b[1].updatedAt||'').localeCompare(a[1].updatedAt||''));
+  const reqPanel=rqs.length?`<section class="panel"><div class="ph"><h3>給 Claude 的留言</h3><span class="muted">待你確認 ${rqs.filter(x=>x[1].status==='review').length}</span></div><div class="plist">${rqs.map(([id,r])=>{const p=P(r.projectId),st=REQ[r.status]||REQ.open;return `<button type="button" class="prow" data-act="open-project" data-id="${esc(r.projectId)}"><span class="prow-top">${codeTag(p)}<span class="pill ${st[1]}">${st[0]}</span></span><span class="rq-line">${esc(r.text)}</span></button>`;}).join('')}</div></section>`:'';
+  return head+statusBanner()+kpis+`<div class="ov-grid"><div class="ov-col">${agenda}${attention}</div><div class="ov-col">${reqPanel}${projPanel}</div></div>`;
 }
 function projSort(a,b){
   const s=(PORDER[a[1].status]??9)-(PORDER[b[1].status]??9);if(s)return s;
@@ -287,7 +305,7 @@ function vProjects(){
   const cards=list.map(([id,p])=>{
     const g=prog(id),c=catP(p);
     return `<article class="pcard c-${c}" data-act="open-project" data-id="${esc(id)}" role="button" tabindex="0" aria-label="${esc(p.code)} ${esc(p.name)}，完成 ${g.pct}%">
-      <div class="pc-top">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${smp(p)}${statusPill(p)}</div>
+      <div class="pc-top">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${smp(p)}${(n=>n?`<span class="pill warn">${n} 則留言待你確認</span>`:'')(liveReqs(id).filter(x=>x[1].status==='review').length)}${statusPill(p)}</div>
       <h3>${esc(p.name)}</h3>
       <p class="pc-meta">${p.owner?esc(p.owner)+' · ':''}${fmtD(p.start)} → ${fmtD(p.end)}${p.priority==='high'?' · 高優先':''}</p>
       ${barHTML(c,g.pct,g.tpos)}
@@ -442,6 +460,7 @@ function renderDrawer(){
   const el=$('#drawer');const id=S.openProject;const p=P(id);
   if(!p){S.openProject=null;el.hidden=true;el.innerHTML='';lockScroll();return;}
   const keep=el.querySelector('.drawer');const st=keep?keep.scrollTop:0;
+  const ta0=el.querySelector('#rq-text');const draft=ta0?{v:ta0.value,f:document.activeElement===ta0,a:ta0.selectionStart,b:ta0.selectionEnd,pid:S.openProject}:null;
   const g=prog(id),c=catP(p);
   const ts=E(S.tasks).filter(x=>x[1].projectId===id).sort((a,b)=>{
     const o={todo:1,doing:0,review:2,done:3};return (o[a[1].status]??1)-(o[b[1].status]??1)||(a[1].due||'9999').localeCompare(b[1].due||'9999');});
@@ -465,11 +484,19 @@ function renderDrawer(){
       <div class="d-sec-h"><h3>接下來的行程</h3><button type="button" class="btn w-only" data-act="new" data-kind="event" data-project="${esc(id)}">＋ 行程</button></div>
       ${evs.length?evs.map(([eid,e])=>`<button type="button" class="dpi c-${catE(e)}" data-act="edit" data-kind="event" data-id="${esc(eid)}"><span class="dpi-t">${mdw(e.date)}</span><span class="dpi-m"><b>${esc(e.title)}</b><small>${e.start?esc(e.start)+' · ':''}${evMeta(e)}</small></span></button>`).join(''):'<p class="muted">沒有排定的行程。</p>'}
     </div>
+    <div class="d-sec">
+      <div class="d-sec-h"><h3>給 Claude 的留言</h3></div>
+      <p class="muted rq-hint">${projFolder(p)?`下次用 Claude 打開這個專案的資料夾（${esc(projFolder(p))}）時，Claude 會收到待處理的留言。改好會先給你看 demo，你按「核准上線」才會上線。`:'這個專案還沒設定資料夾，Claude 收不到留言。請按「編輯專案」填上資料夾。'}</p>
+      ${liveReqs(id).map(reqHTML).join('')}
+      <div class="rq-new w-only"><textarea id="rq-text" maxlength="2000" placeholder="例如：首頁的表格加一欄「負責人」"></textarea><button type="button" class="btn primary" data-act="req-send" data-id="${esc(id)}">送出留言</button></div>
+    </div>
     ${p.updatedBy?`<p class="muted" style="font-size:12px">最後更新：${esc(p.updatedBy)}${p.updatedAt?' · '+esc(new Date(p.updatedAt).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})):''}</p>`:''}
     <div class="d-foot w-only"><button type="button" class="btn" data-act="edit" data-kind="project" data-id="${esc(id)}">編輯專案</button></div>
   </div>`;
   el.hidden=false;
   const nd=el.querySelector('.drawer');if(nd)nd.scrollTop=st;
+  const ta1=el.querySelector('#rq-text');
+  if(ta1&&draft&&draft.pid===id){ta1.value=draft.v;if(draft.f){ta1.focus({preventScroll:true});try{ta1.setSelectionRange(draft.a,draft.b);}catch(e){}}}
   lockScroll();
 }
 
@@ -517,6 +544,7 @@ function formHTML(kind,d,isEdit){
       <label>開始日<input type="date" name="start" id="f-start" value="${esc(d.start)}"></label>
       <label>截止日<input type="date" name="end" id="f-end" value="${esc(d.end)}"></label>
       <label class="full">負責人<input name="owner" id="f-owner" maxlength="30" value="${esc(d.owner)}" placeholder="姓名"></label>
+      <label class="full">資料夾（Claude 用來對應這個專案）<input name="folder" id="f-folder" maxlength="260" value="${esc(d.folder||projFolder(d))}" placeholder="例如：D:\\AI\\採購工作看板App" style="font-family:var(--f-mono)"></label>
       <label class="full">說明<textarea name="desc" id="f-desc" maxlength="2000" placeholder="目標、範圍、注意事項">${esc(d.desc)}</textarea></label>
       <label class="full">手動進度 <output id="f-prog-out">${Math.round(+d.progress||0)}%</output><input type="range" name="progress" id="f-prog" min="0" max="100" step="5" value="${Math.round(+d.progress||0)}"><span class="hint">專案底下有任務時，進度會改用任務完成比例自動計算。</span></label>`;
   }
@@ -549,6 +577,7 @@ async function submitForm(form){
   if(!M)return;
   if(M.kind==='user')return submitUser(form);
   if(M.kind==='import')return doImport();
+  if(M.kind==='reqrevise')return submitRevise(form);
   if(!S.canWrite)return;
   const f=new FormData(form);const v=k=>String(f.get(k)||'').trim();
   const kind=M.kind,coll=COLL[kind],prev=M.id?S[coll][M.id]:null;
@@ -561,7 +590,7 @@ async function submitForm(form){
     if(!data.title)err='請填寫任務名稱。';
     if(data.status==='done')data.doneAt=(prev&&prev.status==='done'&&prev.doneAt)?prev.doneAt:new Date().toISOString();
   }else{
-    data={name:v('name'),category:CAT[v('category')]?v('category'):'gn',code:v('code').toUpperCase(),status:PSTATUS[v('status')]?v('status'):'active',priority:PRIO[v('priority')]?v('priority'):'mid',start:v('start'),end:v('end'),owner:v('owner'),desc:v('desc'),progress:Math.max(0,Math.min(100,+v('progress')||0))};
+    data={name:v('name'),category:CAT[v('category')]?v('category'):'gn',code:v('code').toUpperCase(),status:PSTATUS[v('status')]?v('status'):'active',priority:PRIO[v('priority')]?v('priority'):'mid',start:v('start'),end:v('end'),owner:v('owner'),folder:v('folder'),desc:v('desc'),progress:Math.max(0,Math.min(100,+v('progress')||0))};
     if(!data.code)data.code=nextCode(data.category);
     const dup=E(S.projects).find(([pid,p])=>pid!==M.id&&(p.code||'').toUpperCase()===data.code);
     if(!data.name)err='請填寫專案名稱。';else if(data.start&&data.end&&data.end<data.start)err='截止日不能早於開始日。';else if(dup)err=`代碼 ${data.code} 已被「${dup[1].name}」使用，請換一個。`;
@@ -589,6 +618,42 @@ function arm(btn,label,fn){
   if(btn.dataset.armed){fn();return;}
   const old=btn.textContent;btn.dataset.armed='1';btn.textContent=label;btn.classList.add('armed');
   setTimeout(()=>{if(btn.isConnected){delete btn.dataset.armed;btn.textContent=old;btn.classList.remove('armed');}},4000);
+}
+
+/* ---------- 給 Claude 的留言 ---------- */
+function sendReq(pid){
+  const ta=$('#rq-text');const t=(ta&&ta.value||'').trim();
+  if(!t){toast('請先寫留言內容');if(ta)ta.focus();return;}
+  const iso=new Date().toISOString();
+  put('requests',uid('r'),{projectId:pid,text:t,status:'open',replies:[],createdAt:iso,updatedAt:iso});
+  if(ta)ta.value='';
+  toast(projFolder(P(pid))?'已送出，下次用 Claude 打開這個專案時會處理':'已送出；這個專案還沒設定資料夾，記得在「編輯專案」填上');
+}
+function setReq(id,patch,msg){
+  const r=S.requests[id];if(!r)return;
+  put('requests',id,Object.assign({},r,patch,{updatedAt:new Date().toISOString()}));
+  if(msg)toast(msg);
+}
+function openRevise(id){
+  if(!S.requests[id])return;
+  M={kind:'reqrevise',id,opener:document.activeElement};
+  $('#sheet').innerHTML=`<form id="m-form" novalidate>
+    <h2 id="m-title">還要修改什麼？</h2>
+    <p class="muted" style="margin-bottom:10px">原本的留言：${esc(S.requests[id].text)}</p>
+    <div class="fgrid"><label class="full">補充說明 <span class="req">*</span><textarea name="text" id="f-title" maxlength="2000" placeholder="例如：按鈕再大一點，手機上也要看得到"></textarea></label></div>
+    <p class="ferr" id="ferr" role="alert"></p>
+    <div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">取消</button><button type="submit" class="btn primary" id="f-save">送出</button></div>
+  </form>`;
+  $('#modal').hidden=false;lockScroll();
+  setTimeout(()=>{const f=$('#f-title');if(f)f.focus();},0);
+}
+function submitRevise(form){
+  const r=S.requests[M.id];const t=String(new FormData(form).get('text')||'').trim();
+  if(!t){$('#ferr').textContent='請寫要修改的地方。';return;}
+  if(!r){closeModal();return;}
+  const replies=(r.replies||[]).concat([{id:uid('c'),by:myName(),text:t,at:new Date().toISOString()}]);
+  setReq(M.id,{replies,status:'open'},'已送出，Claude 下次打開這個專案時會再修改');
+  closeModal();
 }
 
 /* ================= actions ================= */
@@ -694,6 +759,10 @@ document.addEventListener('click',e=>{
     case 'toggle-user':{const u=(U.list||[]).find(x=>x.email===d.id);if(u)userCall('userSave',{email:u.email,name:u.name,pages:u.pages,enabled:!u.enabled},u.enabled?`已停用 ${u.email}`:`已啟用 ${u.email}`);break;}
     case 'delete-user':arm(a,'再按一次確認刪除',()=>userCall('userDelete',{email:d.id},`已刪除 ${d.id}`));break;
     case 'backup':exportBackup();break;
+    case 'req-send':sendReq(d.id);break;
+    case 'req-approve':setReq(d.id,{status:'approved'},'已核准，Claude 下次打開這個專案時會上線');break;
+    case 'req-cancel':arm(a,'再按一次確認取消',()=>setReq(d.id,{status:'closed'},'已取消這則留言'));break;
+    case 'req-revise':openRevise(d.id);break;
     case 'import':{const f=$('#importFile');f.value='';f.click();break;}
   }
 });
