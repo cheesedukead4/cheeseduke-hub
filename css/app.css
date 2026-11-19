@@ -432,6 +432,45 @@ html.auth-locked .app{display:none}
 .rq-new textarea{width:100%;min-height:72px;resize:vertical;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:14px}
 .rq-line{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .rq-imgs{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+/* 留言框：加入圖片、貼上截圖 */
+.rq-tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.rq-tools .muted{font-size:12px}
+.rq-tools .sp{flex:1}
+.rq-pend{display:flex;flex-wrap:wrap;gap:8px}
+.rq-pend:empty{display:none}
+.pend-img{position:relative;width:96px;height:72px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface-2)}
+.pend-img img{width:100%;height:100%;object-fit:cover;display:block}
+.pend-img button{position:absolute;top:3px;right:3px;width:24px;height:24px;border-radius:999px;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:12px;line-height:1;display:grid;place-items:center}
+.pend-up{display:inline-flex;align-items:center;font-size:12.5px;color:var(--info);padding:0 6px}
+/* Claude 整理的「給工程師的討論重點」 */
+.rq-brief{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;background:var(--accent-soft);padding:8px 10px;display:grid;gap:4px}
+.rq-brief-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:12.5px}
+.rq-brief p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px}
+.fgrid label.chk{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--fg);font-weight:500;cursor:pointer}
+.fgrid label.chk input{width:18px;height:18px;min-height:0;margin:1px 0 0;flex:none;accent-color:var(--accent)}
+/* 工程師討論清單 */
+.vl-sub{margin:-8px 0 10px}
+.vl-tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.vl-tools .sp{flex:1}
+.vl-grp{display:grid;gap:8px;padding:12px 0;border-top:1px solid var(--line)}
+.vl-grp h3{font-size:16px;font-weight:700;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.vl-grp h3 .muted{font-size:12.5px;font-weight:500}
+.vl-url{font-family:var(--f-mono);font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;margin-top:-4px}
+.vl-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:6px;break-inside:avoid}
+.vl-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12.5px}
+.vl-brief{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6}
+.vl-raw{color:var(--fg)}
+.vl-orig{font-size:12.5px;overflow-wrap:anywhere}
+@media print{
+  body.print-sheet .app,body.print-sheet #drawer,body.print-sheet .toast{display:none!important}
+  body.print-sheet #modal{position:static!important;display:block!important;background:none!important;padding:0!important}
+  body.print-sheet .sheet{box-shadow:none!important;max-height:none!important;overflow:visible!important;width:auto!important;border-radius:0;padding:0}
+  body.print-sheet{background:#fff;color:#000}
+  .no-print{display:none!important}
+  .vl-item{border-color:#bbb}
+  .rq-img{width:220px;height:auto;max-height:180px;border-color:#bbb}
+  .rq-img img{height:auto;max-height:180px;object-fit:contain}
+}
 .rq-img{border:1px solid var(--line);border-radius:8px;padding:0;background:var(--surface);cursor:zoom-in;overflow:hidden;width:160px;height:110px}
 .rq-img img{width:100%;height:100%;object-fit:cover;display:block;font-size:11px;color:var(--muted)}
 .sheet.wide{width:min(980px,100%)}

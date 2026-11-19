@@ -6,6 +6,7 @@
  *   projects  { id, code, name, category: wh|it|gn, status: plan|active|hold|done, priority: high|mid|low,
  *               start, end (YYYY-MM-DD), owner, folder, url (系統網址，入口頁用), desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
  *             沒填 url 時，用說明裡的「App：網址」或「入口網址：網址」。
+ *             vendor＝委外工程師負責：留言由 Claude 整理成給工程師的討論重點（brief），不直接修改；有「工程師討論清單」可列印／複製。
  *   links     入口頁的常用連結（不是專案的系統，例如夥伴交接看板）{ id, title, url, category: wh|it|gn, note }
  *   tasks     { id, title, projectId, status: todo|doing|review|done, priority, due, assignee, note, progress (0-100，任務自己的執行進度), doneAt, ... }
  *   events    { id, title, type: inbound|outbound|inventory|it|meeting|other, date, start, end (HH:MM), projectId, location, note, ... }
@@ -67,7 +68,7 @@ const S={
   projects:{},tasks:{},events:{},requests:{},links:{},
   view:'portal',cat:'all',
   calMonth:TODAY().slice(0,7),selDay:TODAY(),
-  boardProject:'all',projStatus:'all',showAllDone:false,
+  boardProject:'all',projStatus:'all',showAllDone:false,vlFilter:'open',
   openProject:null,loaded:false
 };
 Object.defineProperty(S,'canWrite',{get:canEdit});
@@ -210,26 +211,99 @@ function openImg(id){
 // 留言是針對哪個任務（任務被改名時用目前的名稱）
 const reqTask=r=>r.taskId?((S.tasks[r.taskId]||{}).title||r.taskTitle||'（任務已刪除）'):'';
 const taskReqs=tid=>E(S.requests).filter(x=>x[1].taskId===tid&&x[1].status!=='closed').sort((a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||''));
+// 委外工程師負責的專案（vendor）：留言由 Claude 整理成「給工程師的討論重點」，不直接修改
+const VREQ={open:['待整理','info'],review:['已整理，待你確認','warn'],approved:['待跟工程師討論','ok'],done:['已討論','ok'],closed:['已取消','']};
+const isVendorReq=r=>!!(r.vendor||(P(r.projectId)||{}).vendor);
+const reqLabel=r=>(isVendorReq(r)?VREQ:REQ)[r.status]||REQ.open;
+const imgsHTML=list=>list&&list.length?`<div class="rq-imgs">${list.map(imgTag).join('')}</div>`:'';
 // showTask：在專案詳情裡標出「任務：…」；在任務自己的視窗裡不用標
 function reqHTML([id,r],showTask){
-  const st=REQ[r.status]||REQ.open;
+  const st=reqLabel(r),vend=isVendorReq(r);
   const tk=showTask===true&&r.taskId?`<span class="rq-task">任務：${esc(reqTask(r))}</span>`:'';
-  const replies=(r.replies||[]).map(c=>`<div class="rq-reply${c.by==='Claude'?' ai':''}"><div class="rq-who"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span></div>${c.text?`<p>${esc(c.text)}</p>`:''}${c.images&&c.images.length?`<div class="rq-imgs">${c.images.map(imgTag).join('')}</div>`:''}</div>`).join('');
-  const acts=r.status==='review'?`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">核准上線</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`
-    :r.status==='open'?`<button type="button" class="btn ghost" data-act="req-cancel" data-id="${esc(id)}">取消留言</button>`:'';
+  const replies=(r.replies||[]).map(c=>`<div class="rq-reply${c.by==='Claude'?' ai':''}"><div class="rq-who"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span></div>${c.text?`<p>${esc(c.text)}</p>`:''}${imgsHTML(c.images)}</div>`).join('');
+  const brief=r.brief?`<div class="rq-brief"><div class="rq-brief-h"><b>給工程師的討論重點</b><span class="muted">Claude 整理 · ${whenTxt(r.briefAt)}</span></div><p>${esc(r.brief)}</p></div>`:'';
+  let acts='';
+  if(r.status==='review')acts=`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">${vend?'確認，列入討論清單':'核准上線'}</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`;
+  else if(r.status==='open')acts=`<button type="button" class="btn ghost" data-act="req-cancel" data-id="${esc(id)}">取消留言</button>`;
+  else if(vend&&r.status==='approved')acts=`<button type="button" class="btn primary" data-act="req-discussed" data-id="${esc(id)}">已跟工程師討論</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`;
   // 還沒有 Claude 的回覆：顯示等待中（轉送收到後會先回覆「已交給 Claude 的…處理」）
   const rs=r.replies||[],lastBy=rs.length?rs[rs.length-1].by:'';
-  const wait=(r.status==='open'||r.status==='approved')&&lastBy!=='Claude'?`<p class="muted rq-wait">${r.status==='approved'?'已核准，等待 Claude 收到後上線…':'等待 Claude 收到…（通常 1 分鐘內會在這裡回覆）'}</p>`:'';
-  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span>${tk}<span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div><p class="rq-t">${esc(r.text)}</p>${replies}${wait}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
+  let wait='';
+  if(r.status==='open'&&lastBy!=='Claude')wait=vend?'等待 Claude 整理成給工程師的討論重點…（通常幾分鐘內）':'等待 Claude 收到…（通常 1 分鐘內會在這裡回覆）';
+  else if(r.status==='approved'&&!vend&&lastBy!=='Claude')wait='已核准，等待 Claude 收到後上線…';
+  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span>${tk}<span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div>${r.text?`<p class="rq-t">${esc(r.text)}</p>`:''}${imgsHTML(r.images)}${brief}${replies}${wait?`<p class="muted rq-wait">${wait}</p>`:''}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
 }
+
+/* ---------- 留言的圖片：選檔或貼上截圖 → 縮小 → 上傳（imgUp）→ 送出時寫進留言 ---------- */
+const PEND={},UPING={};   // 留言框 key（p:專案 id、t:任務 id、r:留言 id）→ 已上傳、還沒送出的圖片／上傳中張數
+const IMG_LIMIT=4;
+const pendOf=k=>PEND[k]||(PEND[k]=[]);
+function pendHTML(k){
+  const l=pendOf(k),n=UPING[k]||0;
+  return l.map(im=>`<span class="pend-img"><img src="${IMGS[im.id]||''}" alt="${esc(im.name)}"><button type="button" data-act="img-remove" data-key="${esc(k)}" data-id="${esc(im.id)}" aria-label="移除圖片 ${esc(im.name)}">✕</button></span>`).join('')+(n?`<span class="pend-up">上傳中 ${n} 張…</span>`:'');
+}
+function refreshPend(k){document.querySelectorAll('.rq-new').forEach(el=>{if(el.dataset.key===k){const p=el.querySelector('.rq-pend');if(p)p.innerHTML=pendHTML(k);}});}
+// 留言框（textarea＋圖片＋送出），任務視窗、專案詳情、還要修改共用
+function composerHTML(k,taId,placeholder,sendBtn){
+  return `<div class="rq-new w-only" data-key="${esc(k)}"><textarea id="${taId}" maxlength="2000" placeholder="${esc(placeholder)}"></textarea>
+    <div class="rq-pend">${pendHTML(k)}</div>
+    <div class="rq-tools"><button type="button" class="btn" data-act="img-pick" data-key="${esc(k)}">＋ 加入圖片</button><span class="muted">也可以直接在留言框貼上截圖（Ctrl+V），最多 ${IMG_LIMIT} 張</span><span class="sp"></span>${sendBtn||''}</div></div>`;
+}
+// 縮小成最長邊 1600px 的 JPEG（手機照片、截圖都在 2MB 以內）
+function shrinkImage(file){
+  return new Promise((resolve,reject)=>{
+    const url=URL.createObjectURL(file),img=new Image();
+    img.onload=()=>{
+      try{
+        let max=1600,q=0.85,out='';
+        for(let i=0;i<4;i++){
+          const s=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+          const c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.naturalWidth*s));c.height=Math.max(1,Math.round(img.naturalHeight*s));
+          const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);
+          out=c.toDataURL('image/jpeg',q);
+          if(out.length<2600000)break;
+          max=Math.round(max*0.75);q=0.75;
+        }
+        URL.revokeObjectURL(url);resolve(out);
+      }catch(e){URL.revokeObjectURL(url);reject(e);}
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('讀不到這張圖片'));};
+    img.src=url;
+  });
+}
+async function addImages(k,files){
+  const list=[...(files||[])].filter(f=>f&&/^image\//.test(f.type));
+  if(!list.length)return;
+  if(!canEdit()){toast('需要「新增與修改」權限才能加入圖片');return;}
+  for(const f of list){
+    if(pendOf(k).length+(UPING[k]||0)>=IMG_LIMIT){toast(`一則留言最多 ${IMG_LIMIT} 張圖片`);break;}
+    UPING[k]=(UPING[k]||0)+1;refreshPend(k);
+    try{
+      const url=await shrinkImage(f);
+      const name=(f.name&&f.name!=='image.png'?f.name.replace(/\.[^.]+$/,''):'截圖-'+nowHM().replace(':',''))+'.jpg';
+      const j=await AU.api('imgUp',{image:{mime:'image/jpeg',name,data:url.split(',')[1]}});
+      if(!j||!j.ok||!j.image)throw new Error((j&&j.message)||'上傳失敗');
+      IMGS[j.image.id]=url;pendOf(k).push({id:j.image.id,name:j.image.name});
+    }catch(e){toast('圖片上傳失敗：'+(e.message||e));}
+    UPING[k]=Math.max(0,(UPING[k]||0)-1);refreshPend(k);
+  }
+}
+// 送出時取出這個留言框的圖片；還在上傳就先不送
+function takePend(k){
+  if(UPING[k]){toast('圖片還在上傳，請稍等一下再送出');return null;}
+  const l=pendOf(k).map(im=>({id:im.id,name:im.name}));PEND[k]=[];return l;
+}
+
 // 任務視窗下方：這個任務給 Claude 的留言
 const taskReqList=tid=>{const l=taskReqs(tid);return l.length?l.map(x=>reqHTML(x,false)).join(''):'<p class="muted" style="font-size:12.5px">這個任務還沒有留言。</p>';};
+const VENDOR_HINT='這個專案是委外工程師負責：Claude 會把留言和圖片整理成「給工程師的討論重點」（不會直接修改系統），你確認後列入「工程師討論清單」，可以列印或複製給工程師。';
 function taskReqSection(tid){
-  return `<section class="t-rq" aria-label="這個任務給 Claude 的留言">
-    <h3>給 Claude 的留言（這個任務）</h3>
-    <p class="muted rq-hint">只針對這個任務。送出後會直接交給 Claude 處理，不用打開專案；Claude 收到後會在這裡回覆，改好會先附 demo 截圖，你按「核准上線」才會上線。</p>
+  const t=S.tasks[tid]||{},vend=!!(P(t.projectId)||{}).vendor;
+  return `<section class="t-rq" aria-label="這個任務的留言">
+    <h3>${vend?'跟委外工程師討論的事項（這個任務）':'給 Claude 的留言（這個任務）'}</h3>
+    <p class="muted rq-hint">${vend?VENDOR_HINT:'只針對這個任務。送出後會直接交給 Claude 處理，不用打開專案；Claude 收到後會在這裡回覆，改好會先附 demo 截圖，你按「核准上線」才會上線。'}</p>
     <div id="t-rq-list">${taskReqList(tid)}</div>
-    <div class="rq-new w-only"><textarea id="trq-text" maxlength="2000" placeholder="例如：這一頁的表格加上日期篩選"></textarea><button type="button" class="btn primary" data-act="req-send-task" data-id="${esc(tid)}">送出留言</button></div>
+    ${composerHTML('t:'+tid,'trq-text',vend?'例如：倉管駕駛艙的出貨數和實際不一樣（附截圖）':'例如：這一頁的表格加上日期篩選',`<button type="button" class="btn primary" data-act="req-send-task" data-id="${esc(tid)}">送出留言</button>`)}
   </section>`;
 }
 
@@ -324,7 +398,7 @@ function vOverview(){
   const projPanel=`<section class="panel"><div class="ph"><h3>專案進度</h3><button type="button" class="btn ghost" data-act="nav" data-view="projects">全部專案 →</button></div>
     ${plist.length?`<div class="plist">${plist.map(projRow).join('')}</div><p class="legend-note"><i></i>直線標記：依照起訖日期，今天應該完成到的位置</p>`:'<p class="empty">沒有進行中的專案。</p>'}</section>`;
   const rqs=E(S.requests).filter(x=>['open','review','approved'].includes(x[1].status)&&inCat(catP(P(x[1].projectId)))).sort((a,b)=>(a[1].status==='review'?0:1)-(b[1].status==='review'?0:1)||(b[1].updatedAt||'').localeCompare(a[1].updatedAt||''));
-  const reqPanel=rqs.length?`<section class="panel"><div class="ph"><h3>給 Claude 的留言</h3><span class="muted">待你確認 ${rqs.filter(x=>x[1].status==='review').length}</span></div><div class="plist">${rqs.map(([id,r])=>{const p=P(r.projectId),st=REQ[r.status]||REQ.open;return `<button type="button" class="prow" data-act="open-project" data-id="${esc(r.projectId)}"><span class="prow-top">${codeTag(p)}<span class="pill ${st[1]}">${st[0]}</span></span><span class="rq-line">${r.taskId?`〔${esc(reqTask(r))}〕`:''}${esc(r.text)}</span></button>`;}).join('')}</div></section>`:'';
+  const reqPanel=rqs.length?`<section class="panel"><div class="ph"><h3>給 Claude 的留言</h3><span class="muted">待你確認 ${rqs.filter(x=>x[1].status==='review').length}</span></div><div class="plist">${rqs.map(([id,r])=>{const p=P(r.projectId),st=reqLabel(r);return `<button type="button" class="prow" data-act="open-project" data-id="${esc(r.projectId)}"><span class="prow-top">${codeTag(p)}<span class="pill ${st[1]}">${st[0]}</span></span><span class="rq-line">${r.taskId?`〔${esc(reqTask(r))}〕`:''}${esc(r.text)}</span></button>`;}).join('')}</div></section>`:'';
   return head+statusBanner()+kpis+`<div class="ov-grid"><div class="ov-col">${agenda}${attention}</div><div class="ov-col">${reqPanel}${projPanel}</div></div>`;
 }
 function projSort(a,b){
@@ -574,7 +648,7 @@ function renderDrawer(){
     const o={todo:1,doing:0,review:2,done:3};return (o[a[1].status]??1)-(o[b[1].status]??1)||(a[1].due||'9999').localeCompare(b[1].due||'9999');});
   const evs=E(S.events).filter(x=>x[1].projectId===id&&x[1].date>=TODAY()).sort((a,b)=>(a[1].date+(a[1].start||'')).localeCompare(b[1].date+(b[1].start||''))).slice(0,6);
   el.innerHTML=`<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title">
-    <div class="d-head">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${statusPill(p)}${smp(p)}<button type="button" class="btn ghost icon" data-act="close-drawer" aria-label="關閉專案詳情">✕</button></div>
+    <div class="d-head">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${p.vendor?'<span class="rq-task">委外</span>':''}${statusPill(p)}${smp(p)}<button type="button" class="btn ghost icon" data-act="close-drawer" aria-label="關閉專案詳情">✕</button></div>
     <h2 id="d-title">${esc(p.name)}</h2>
     ${(u=>u&&!isSelf(u)?`<a class="btn primary d-open" href="${esc(u)}" target="_blank" rel="noopener">開啟系統 ↗<span class="d-site">${esc(siteOf(u))}</span></a>`:'')(projUrl(p))}
     <dl class="facts">
@@ -594,10 +668,10 @@ function renderDrawer(){
       ${evs.length?evs.map(([eid,e])=>`<button type="button" class="dpi c-${catE(e)}" data-act="edit" data-kind="event" data-id="${esc(eid)}"><span class="dpi-t">${mdw(e.date)}</span><span class="dpi-m"><b>${esc(e.title)}</b><small>${e.start?esc(e.start)+' · ':''}${evMeta(e)}</small></span></button>`).join(''):'<p class="muted">沒有排定的行程。</p>'}
     </div>
     <div class="d-sec">
-      <div class="d-sec-h"><h3>給 Claude 的留言</h3></div>
-      <p class="muted rq-hint">送出後會直接交給 Claude 處理，不用打開專案。Claude 收到後會在這裡回覆（電腦上的 Claude 要開著）；改好會先附 demo 截圖，你按「核准上線」才會上線。只針對某個任務的話，點上面那個任務，在任務視窗下方留言。</p>
+      <div class="d-sec-h"><h3>${p.vendor?'跟委外工程師討論的事項':'給 Claude 的留言'}</h3>${p.vendor?`<button type="button" class="btn" data-act="vendor-list" data-id="${esc(id)}">工程師討論清單</button>`:''}</div>
+      <p class="muted rq-hint">${p.vendor?VENDOR_HINT+'只針對某個任務（頁面）的話，點上面那個任務，在任務視窗下方留言。':'送出後會直接交給 Claude 處理，不用打開專案。Claude 收到後會在這裡回覆（電腦上的 Claude 要開著）；改好會先附 demo 截圖，你按「核准上線」才會上線。只針對某個任務的話，點上面那個任務，在任務視窗下方留言。'}</p>
       ${liveReqs(id).map(x=>reqHTML(x,true)).join('')}
-      <div class="rq-new w-only"><textarea id="rq-text" maxlength="2000" placeholder="例如：首頁的表格加一欄「負責人」"></textarea><button type="button" class="btn primary" data-act="req-send" data-id="${esc(id)}">送出留言</button></div>
+      ${composerHTML('p:'+id,'rq-text',p.vendor?'例如：整個入口網站的登入很慢（附截圖）':'例如：首頁的表格加一欄「負責人」',`<button type="button" class="btn primary" data-act="req-send" data-id="${esc(id)}">送出留言</button>`)}
     </div>
     ${p.updatedBy?`<p class="muted" style="font-size:12px">最後更新：${esc(p.updatedBy)}${p.updatedAt?' · '+esc(new Date(p.updatedAt).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})):''}</p>`:''}
     <div class="d-foot w-only"><button type="button" class="btn" data-act="edit" data-kind="project" data-id="${esc(id)}">編輯專案</button></div>
@@ -621,7 +695,7 @@ function defaults(kind,o){
   if(kind==='task')return {title:'',projectId:o.project||(S.view==='board'&&P(S.boardProject)?S.boardProject:''),status:'todo',priority:'mid',due:o.date||'',assignee:'',note:'',progress:0};
   if(kind==='link')return {title:'',url:'',category:S.cat==='all'?'gn':S.cat,note:''};
   const cat=S.cat==='all'?'wh':S.cat;
-  return {name:'',category:cat,code:nextCode(cat),status:'active',priority:'mid',start:TODAY(),end:'',owner:'',folder:'',url:'',desc:'',progress:0};
+  return {name:'',category:cat,code:nextCode(cat),status:'active',priority:'mid',start:TODAY(),end:'',owner:'',folder:'',url:'',vendor:false,desc:'',progress:0};
 }
 function formHTML(kind,d,isEdit){
   const ro=!S.canWrite;
@@ -664,6 +738,7 @@ function formHTML(kind,d,isEdit){
       <label class="full">負責人<input name="owner" id="f-owner" maxlength="30" value="${esc(d.owner)}" placeholder="姓名"></label>
       <label class="full">資料夾（Claude 用來對應這個專案）<input name="folder" id="f-folder" maxlength="260" value="${esc(d.folder||projFolder(d))}" placeholder="例如：D:\\AI\\採購工作看板App" style="font-family:var(--f-mono)"></label>
       <label class="full">系統網址（「入口」頁的連結）<input type="url" name="url" id="f-url" maxlength="600" value="${esc(d.url||projUrl(d))}" placeholder="例如：https://cheesedukead4.github.io/cheeseduke-fefo/" style="font-family:var(--f-mono)"></label>
+      <label class="full chk"><input type="checkbox" name="vendor" id="f-vendor"${d.vendor?' checked':''}><span>委外工程師負責：留言由 Claude 整理成「給工程師的討論重點」，不直接修改系統</span></label>
       <label class="full">說明<textarea name="desc" id="f-desc" maxlength="2000" placeholder="目標、範圍、注意事項">${esc(d.desc)}</textarea></label>
       <label class="full">手動進度 <output id="f-prog-out">${Math.round(+d.progress||0)}%</output><input type="range" name="progress" id="f-prog" min="0" max="100" step="5" value="${Math.round(+d.progress||0)}"><span class="hint">專案底下有任務時，進度會改用所有任務進度的平均自動計算。</span></label>`;
   }
@@ -688,7 +763,7 @@ function openForm(kind,id,o){
   setTimeout(()=>{const f=$('#f-title');if(f){f.focus();if(!id)f.select();}},0);
 }
 function closeModal(){
-  const op=M&&M.opener;M=null;pendingImport=null;$('#modal').hidden=true;$('#sheet').innerHTML='';$('#sheet').classList.remove('wide');lockScroll();
+  const op=M&&M.opener;M=null;pendingImport=null;$('#modal').hidden=true;$('#sheet').innerHTML='';$('#sheet').classList.remove('wide');document.body.classList.remove('print-sheet');lockScroll();
   if(op&&op.isConnected)try{op.focus();}catch(e){}
 }
 function lockScroll(){document.body.classList.toggle('locked',!$('#modal').hidden||!$('#drawer').hidden);}
@@ -715,7 +790,7 @@ async function submitForm(form){
     data={title:v('title'),url:v('url'),category:CAT[v('category')]?v('category'):'gn',note:v('note')};
     if(!data.title)err='請填寫名稱。';else if(!okUrl(data.url))err='請填寫正確的網址（https:// 開頭）。';
   }else{
-    data={name:v('name'),category:CAT[v('category')]?v('category'):'gn',code:v('code').toUpperCase(),status:PSTATUS[v('status')]?v('status'):'active',priority:PRIO[v('priority')]?v('priority'):'mid',start:v('start'),end:v('end'),owner:v('owner'),folder:v('folder'),url:v('url'),desc:v('desc'),progress:Math.max(0,Math.min(100,+v('progress')||0))};
+    data={name:v('name'),category:CAT[v('category')]?v('category'):'gn',code:v('code').toUpperCase(),status:PSTATUS[v('status')]?v('status'):'active',priority:PRIO[v('priority')]?v('priority'):'mid',start:v('start'),end:v('end'),owner:v('owner'),folder:v('folder'),url:v('url'),vendor:f.get('vendor')==='on',desc:v('desc'),progress:Math.max(0,Math.min(100,+v('progress')||0))};
     if(!data.code)data.code=nextCode(data.category);
     const dup=E(S.projects).find(([pid,p])=>pid!==M.id&&(p.code||'').toUpperCase()===data.code);
     if(!data.name)err='請填寫專案名稱。';else if(data.start&&data.end&&data.end<data.start)err='截止日不能早於開始日。';else if(data.url&&!okUrl(data.url))err='系統網址要以 https:// 或 http:// 開頭。';else if(dup)err=`代碼 ${data.code} 已被「${dup[1].name}」使用，請換一個。`;
@@ -749,14 +824,22 @@ function arm(btn,label,fn){
 // tid 有值：針對任務的留言（任務視窗裡的留言框）
 function sendReq(pid,tid){
   const ta=$(tid?'#trq-text':'#rq-text');const t=(ta&&ta.value||'').trim();
-  if(!t){toast('請先寫留言內容');if(ta)ta.focus();return;}
+  const k=tid?'t:'+tid:'p:'+pid;
+  if(!t&&!pendOf(k).length){toast('請先寫留言內容或加入圖片');if(ta)ta.focus();return;}
   const iso=new Date().toISOString(),task=tid?S.tasks[tid]:null;
   if(tid&&!task){toast('這個任務已被刪除');return;}
-  const rec={projectId:pid||(task&&task.projectId)||'',text:t,status:'open',replies:[],createdAt:iso,updatedAt:iso};
-  if(task){rec.taskId=tid;rec.taskTitle=task.title;}
+  const images=takePend(k);if(!images)return;
+  const projectId=pid||(task&&task.projectId)||'',vend=!!(P(projectId)||{}).vendor;
+  const rec={projectId,text:t,status:'open',replies:[],createdAt:iso,updatedAt:iso};
+  if(images.length)rec.images=images;
+  if(vend)rec.vendor=true;
+  if(task){
+    rec.taskId=tid;rec.taskTitle=task.title;
+    const m=/https?:\/\/[^\s<>"']+/.exec(task.note||'');if(m)rec.taskUrl=m[0];   // 頁面網址（Claude 整理討論重點時用）
+  }
   put('requests',uid('r'),rec);
-  if(ta)ta.value='';
-  toast('已送出，Claude 會直接收到並開始處理（約 1 分鐘內在這裡回覆）');
+  if(ta)ta.value='';refreshPend(k);
+  toast(vend?'已送出，Claude 會整理成給工程師的討論重點（幾分鐘內在這裡回覆）':'已送出，Claude 會直接收到並開始處理（約 1 分鐘內在這裡回覆）');
 }
 function setReq(id,patch,msg){
   const r=S.requests[id];if(!r)return;
@@ -766,10 +849,12 @@ function setReq(id,patch,msg){
 function openRevise(id){
   if(!S.requests[id])return;
   M={kind:'reqrevise',id,opener:document.activeElement};
+  const vend=isVendorReq(S.requests[id]);
   $('#sheet').innerHTML=`<form id="m-form" novalidate>
-    <h2 id="m-title">還要修改什麼？</h2>
-    <p class="muted" style="margin-bottom:10px">原本的留言：${esc(S.requests[id].text)}</p>
-    <div class="fgrid"><label class="full">補充說明 <span class="req">*</span><textarea name="text" id="f-title" maxlength="2000" placeholder="例如：按鈕再大一點，手機上也要看得到"></textarea></label></div>
+    <h2 id="m-title">${vend?'要補充或修改什麼？':'還要修改什麼？'}</h2>
+    <p class="muted" style="margin-bottom:10px">原本的留言：${esc(S.requests[id].text||'（只有圖片）')}</p>
+    <p style="font-weight:500;margin-bottom:6px">補充說明 <span class="req">*</span></p>
+    ${composerHTML('r:'+id,'f-title',vend?'例如：重點裡第 2 點不對，應該是…（可以附圖）':'例如：按鈕再大一點，手機上也要看得到','')}
     <p class="ferr" id="ferr" role="alert"></p>
     <div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">取消</button><button type="submit" class="btn primary" id="f-save">送出</button></div>
   </form>`;
@@ -777,12 +862,77 @@ function openRevise(id){
   setTimeout(()=>{const f=$('#f-title');if(f)f.focus();},0);
 }
 function submitRevise(form){
-  const r=S.requests[M.id];const t=String(new FormData(form).get('text')||'').trim();
-  if(!t){$('#ferr').textContent='請寫要修改的地方。';return;}
+  const r=S.requests[M.id],ta=$('#f-title'),t=String((ta&&ta.value)||'').trim(),k='r:'+M.id;
+  if(!t&&!pendOf(k).length){$('#ferr').textContent='請寫要修改的地方，或加入圖片。';return;}
   if(!r){closeModal();return;}
-  const replies=(r.replies||[]).concat([{id:uid('c'),by:myName(),text:t,at:new Date().toISOString()}]);
-  setReq(M.id,{replies,status:'open'},'已送出，Claude 會直接收到並再修改');
+  const images=takePend(k);if(!images)return;
+  const reply={id:uid('c'),by:myName(),text:t,at:new Date().toISOString()};if(images.length)reply.images=images;
+  const replies=(r.replies||[]).concat([reply]);
+  setReq(M.id,{replies,status:'open'},isVendorReq(r)?'已送出，Claude 會照補充更新討論重點':'已送出，Claude 會直接收到並再修改');
   closeModal();
+}
+
+/* ---------- 工程師討論清單（委外專案）：依任務（頁面）整理，可以列印或複製 ---------- */
+const VL_FILTER={open:['還沒討論',s=>s!=='done'],done:['已討論',s=>s==='done'],all:['全部',()=>true]};
+const urlIn=s=>{const m=/https?:\/\/[^\s<>"']+/.exec(s||'');return m?m[0]:'';};
+function vlGroups(pid){
+  const f=(VL_FILTER[S.vlFilter]||VL_FILTER.open)[1];
+  const reqs=E(S.requests).filter(([,r])=>r.projectId===pid&&r.status!=='closed'&&f(r.status));
+  const order={approved:0,review:1,open:2,done:3};
+  const groups=[];
+  const tasks=E(S.tasks).filter(([,t])=>t.projectId===pid).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  for(const [tid,t] of tasks){
+    const items=reqs.filter(([,r])=>r.taskId===tid).sort((a,b)=>(order[a[1].status]??9)-(order[b[1].status]??9)||(a[1].createdAt||'').localeCompare(b[1].createdAt||''));
+    if(items.length)groups.push({title:t.title,url:urlIn(t.note),pct:tpct(t),items});
+  }
+  const rest=reqs.filter(([,r])=>!r.taskId||!S.tasks[r.taskId]);
+  if(rest.length)groups.push({title:'整個專案／其他',url:'',pct:null,items:rest});
+  return groups;
+}
+function vlBody(pid){
+  const gs=vlGroups(pid);
+  if(!gs.length)return `<p class="empty">${S.vlFilter==='done'?'還沒有已討論的事項。':'目前沒有要跟工程師討論的事項。在任務視窗下方留言，Claude 整理後會出現在這裡。'}</p>`;
+  let n=0;
+  return gs.map(g=>`<section class="vl-grp"><h3>${esc(g.title)}${g.pct!==null?`<span class="muted">執行進度 ${g.pct}%</span>`:''}</h3>${g.url?`<p class="vl-url">${esc(g.url)}</p>`:''}
+    ${g.items.map(([id,r])=>{n++;const st=reqLabel(r);
+      return `<article class="vl-item"><div class="vl-h"><b>${n}.</b><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div>
+        ${r.brief?`<div class="vl-brief">${esc(r.brief)}</div><p class="vl-orig"><span class="muted">原始留言：</span>${esc(r.text||'（只有圖片）')}</p>`:`<div class="vl-brief vl-raw"><span class="muted">（Claude 還沒整理）</span>\n${esc(r.text||'（只有圖片）')}</div>`}
+        ${imgsHTML((r.images||[]).concat(...(r.replies||[]).filter(c=>c.by!=='Claude').map(c=>c.images||[])))}
+      </article>`;}).join('')}</section>`).join('');
+}
+function vlText(pid){
+  const p=P(pid)||{},gs=vlGroups(pid);let n=0;
+  const lines=[`【工程師討論清單】${p.name||''}（${TODAY().replace(/-/g,'/')}，${VL_FILTER[S.vlFilter||'open'][0]}）`];
+  for(const g of gs){
+    lines.push('',`■ ${g.title}${g.pct!==null?`（執行進度 ${g.pct}%）`:''}${g.url?' '+g.url:''}`);
+    for(const [,r] of g.items){
+      n++;const imgs=(r.images||[]).length+(r.replies||[]).filter(c=>c.by!=='Claude').reduce((s,c)=>s+(c.images||[]).length,0);
+      lines.push(`${n}.〔${reqLabel(r)[0]}〕`,r.brief||r.text||'（只有圖片）');
+      if(imgs)lines.push(`（附圖 ${imgs} 張，在倉儲 IT 整合中心看）`);
+    }
+  }
+  return lines.join('\n');
+}
+function openVendorList(pid){
+  const p=P(pid);if(!p)return;
+  if(!VL_FILTER[S.vlFilter])S.vlFilter='open';
+  M={kind:'vlist',id:pid,opener:document.activeElement};
+  $('#sheet').classList.add('wide');document.body.classList.add('print-sheet');
+  $('#sheet').innerHTML=`<h2 id="m-title">工程師討論清單</h2>
+    <p class="muted vl-sub">${esc(p.code||'')} ${esc(p.name)} · ${TODAY().replace(/-/g,'/')} 整理</p>
+    <div class="vl-tools no-print"><div class="seg" role="group" aria-label="篩選">${Object.entries(VL_FILTER).map(([k,[l]])=>`<button type="button" data-act="vl-filter" data-status="${k}" aria-pressed="${S.vlFilter===k}">${l}</button>`).join('')}</div><span class="sp"></span><button type="button" class="btn" data-act="vl-copy">複製文字</button><button type="button" class="btn" data-act="vl-print">列印／存成 PDF</button><button type="button" class="btn" data-act="close-modal">關閉</button></div>
+    <div id="vl-body">${vlBody(pid)}</div>`;
+  $('#modal').hidden=false;lockScroll();loadImgs();
+}
+function vlRefresh(){
+  if(!M||M.kind!=='vlist')return;
+  const b=$('#vl-body');if(b){b.innerHTML=vlBody(M.id);loadImgs();}
+  document.querySelectorAll('[data-act=vl-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.status===S.vlFilter)));
+}
+async function vlCopy(){
+  if(!M||M.kind!=='vlist')return;
+  try{await navigator.clipboard.writeText(vlText(M.id));toast('已複製，可以貼到 LINE 或 Email 給工程師');}
+  catch(e){toast('複製失敗，請改用「列印／存成 PDF」');}
 }
 
 /* ================= actions ================= */
@@ -834,6 +984,7 @@ function render(){
   renderSync();renderFoot();
   // 任務視窗開著時，留言有新回覆就更新（留言框不動，打到一半的字不會不見）
   if(M&&M.kind==='task'&&M.id){const l=$('#t-rq-list');if(l){l.innerHTML=taskReqList(M.id);loadImgs();}}
+  vlRefresh();
   if(S.openProject||!$('#drawer').hidden){
     const dr=$('#drawer');const dfk=dr.contains(document.activeElement)?focusKey(document.activeElement):null;
     renderDrawer();
@@ -892,7 +1043,14 @@ document.addEventListener('click',e=>{
     case 'backup':exportBackup();break;
     case 'req-send':sendReq(d.id);break;
     case 'req-send-task':{const t=S.tasks[d.id];if(t)sendReq(t.projectId,d.id);else toast('這個任務已被刪除');break;}
-    case 'req-approve':setReq(d.id,{status:'approved'},'已核准，Claude 會直接收到並上線');break;
+    case 'req-approve':{const r=S.requests[d.id];setReq(d.id,{status:'approved'},r&&isVendorReq(r)?'已列入「工程師討論清單」':'已核准，Claude 會直接收到並上線');break;}
+    case 'req-discussed':setReq(d.id,{status:'done'},'已標記為「已跟工程師討論」');break;
+    case 'vendor-list':openVendorList(d.id);break;
+    case 'vl-filter':S.vlFilter=d.status;vlRefresh();break;
+    case 'vl-copy':vlCopy();break;
+    case 'vl-print':window.print();break;
+    case 'img-pick':{const f=$('#imgFile');f.dataset.key=d.key;f.value='';f.click();break;}
+    case 'img-remove':PEND[d.key]=pendOf(d.key).filter(im=>im.id!==d.id);refreshPend(d.key);break;
     case 'req-cancel':arm(a,'再按一次確認取消',()=>setReq(d.id,{status:'closed'},'已取消這則留言'));break;
     case 'req-revise':openRevise(d.id);break;
     case 'req-img':openImg(d.id);break;
@@ -901,6 +1059,14 @@ document.addEventListener('click',e=>{
 });
 $('#sync').addEventListener('click',()=>ST.syncNow());
 $('#importFile').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f)readImport(f);});
+$('#imgFile').addEventListener('change',e=>{const k=e.target.dataset.key;if(k)addImages(k,e.target.files);});
+// 在留言框貼上截圖（Ctrl+V）：有圖片就上傳，純文字照常貼上
+document.addEventListener('paste',e=>{
+  const box=e.target&&e.target.closest&&e.target.closest('.rq-new');if(!box)return;
+  const files=[...((e.clipboardData&&e.clipboardData.files)||[])].filter(f=>/^image\//.test(f.type));
+  if(!files.length)return;
+  e.preventDefault();addImages(box.dataset.key,files);
+});
 document.addEventListener('submit',e=>{if(e.target&&e.target.id==='m-form'){e.preventDefault();submitForm(e.target);}});
 document.addEventListener('change',e=>{
   const t=e.target;
