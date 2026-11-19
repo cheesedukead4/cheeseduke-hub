@@ -7,14 +7,14 @@
  *               start, end (YYYY-MM-DD), owner, folder, url (系統網址，入口頁用), desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
  *             沒填 url 時，用說明裡的「App：網址」或「入口網址：網址」。
  *   links     入口頁的常用連結（不是專案的系統，例如夥伴交接看板）{ id, title, url, category: wh|it|gn, note }
- *   tasks     { id, title, projectId, status: todo|doing|review|done, priority, due, assignee, note, doneAt, ... }
+ *   tasks     { id, title, projectId, status: todo|doing|review|done, priority, due, assignee, note, progress (0-100，任務自己的執行進度), doneAt, ... }
  *   events    { id, title, type: inbound|outbound|inventory|it|meeting|other, date, start, end (HH:MM), projectId, location, note, ... }
  *   requests  給 Claude 的留言 { id, projectId, text, status: open|review|approved|done|closed, replies: [{ id, by, text, at }], createdAt, createdBy }
  *             open 待處理 → Claude 改好、給 demo 後回覆並改成 review 待你確認 → 你按「核准上線」改成 approved → Claude 上線後改成 done。
  *             Claude 端：「倉儲 IT 整合中心」的 Claude 對話每 30 秒檢查一次（開發工具/claude-hub.mjs watch），直接轉給那個專案的 Claude 對話，
  *             用雲端後端的 autoReply 回覆；轉送沒在運作時，打開專案資料夾的 hook 也會讀到留言。
  * 專案的資料夾（folder，或說明裡的「資料夾：路徑」）用來對應 Claude 打開的資料夾。
- * 專案進度＝完成的任務數 ÷ 全部任務數；沒有任務時用 progress。
+ * 任務進度＝任務自己的 progress（已完成一律 100%）；專案進度＝所有任務進度的平均；沒有任務時用專案的 progress。
  * 權限：WIAuth.can('edit') 可以新增、修改、刪除；管理員全部都有。這是畫面權限，雲端後端只擋「不在名單的人」。
  */
 (function(){
@@ -97,10 +97,12 @@ async function drop(coll,id){
 }
 
 /* ================= derived ================= */
+// 任務自己的執行進度：已完成一律 100%，其他用任務的 progress
+const tpct=t=>t.status==='done'?100:Math.max(0,Math.min(100,Math.round(+t.progress||0)));
 function prog(id){
   const p=P(id);const ts=Object.values(S.tasks).filter(t=>t.projectId===id);
   const done=ts.filter(t=>t.status==='done').length;
-  const pct=ts.length?Math.round(done/ts.length*100):(p.status==='done'?100:Math.max(0,Math.min(100,Math.round(+p.progress||0))));
+  const pct=ts.length?Math.round(ts.reduce((s,t)=>s+tpct(t),0)/ts.length):(p.status==='done'?100:Math.max(0,Math.min(100,Math.round(+p.progress||0))));
   let tpos=null;const s=pd(p.start),e=pd(p.end),now=pd(TODAY());
   if(s&&e&&e>s)tpos=Math.max(0,Math.min(100,Math.round((now-s)/(e-s)*100)));
   let health=null;
@@ -148,6 +150,8 @@ function nextCode(cat){
 const codeTag=p=>p?`<span class="code c-${catP(p)}">${esc(p.code||'—')}</span>`:'';
 const smp=o=>o&&o.sample?'<span class="smp">範例</span>':'';
 const barHTML=(cat,pct,tpos)=>`<div class="bar c-${cat}" role="img" aria-label="完成 ${pct}%${tpos!==null?`，時程已過 ${tpos}%`:''}"><i style="width:${pct}%"></i>${tpos!==null?`<b style="left:${tpos}%" title="依時程，今天應該到達的位置"></b>`:''}</div>`;
+// 任務的小進度條（可以放在按鈕裡，所以用 span）
+const miniBar=(cat,pct)=>`<span class="tbar c-${cat}" role="img" aria-label="執行進度 ${pct}%"><i style="width:${pct}%"></i></span>`;
 const statusPill=p=>{const s=PSTATUS[p.status]||PSTATUS.plan;return `<span class="pill ${s[1]}">${s[0]}</span>`;};
 const ckBtn=(id,t)=>`<button type="button" class="ck w-only" data-act="toggle" data-id="${esc(id)}" aria-pressed="${t.status==='done'}" aria-label="${t.status==='done'?'標記為未完成':'標記為完成'}：${esc(t.title)}"></button>`;
 function evMeta(e){
@@ -418,6 +422,7 @@ function vBoard(){
       return `<article class="tcard pr-${x.priority||'mid'}" data-act="edit" data-kind="task" data-id="${esc(id)}" draggable="${S.canWrite}" role="button" tabindex="0">
         <div class="tc-top">${codeTag(p)}${smp(x)}<span class="prio">優先 ${PRIO[x.priority]||'中'}</span></div>
         <p class="tc-title${st==='done'?' done-t':''}">${esc(x.title)}</p>
+        ${st!=='done'&&tpct(x)>0?`<div class="tc-prog">${miniBar(catT(x),tpct(x))}<em>${tpct(x)}%</em></div>`:''}
         <div class="tc-meta">${di?`<span class="due ${di[0]}">${di[1]}</span>`:''}${x.assignee?`<span>${esc(x.assignee)}</span>`:''}</div>
         <div class="tc-move w-only">${prev?`<button type="button" data-act="move" data-id="${esc(id)}" data-to="${prev[0]}" aria-label="移到${prev[1]}">‹ ${prev[1]}</button>`:''}${next?`<button type="button" class="nx" data-act="move" data-id="${esc(id)}" data-to="${next[0]}" aria-label="移到${next[1]}">${next[1]} ›</button>`:''}</div>
       </article>`;
@@ -563,10 +568,10 @@ function renderDrawer(){
       <div><dt>截止</dt><dd>${endLabel(p)}</dd></div>
     </dl>
     ${p.desc?`<p class="desc">${esc(p.desc)}</p>`:''}
-    <div class="d-prog">${barHTML(c,g.pct,g.tpos)}<div class="d-prog-meta"><span>完成 <b>${g.pct}%</b></span>${g.tpos!==null?`<span>時程已過 ${g.tpos}%</span>`:''}<span class="pill ${g.health[0]}">${g.health[1]}</span>${g.total?'':'<span>（沒有任務時，以專案設定的進度為準）</span>'}</div></div>
+    <div class="d-prog">${barHTML(c,g.pct,g.tpos)}<div class="d-prog-meta"><span>整體進度 <b>${g.pct}%</b></span>${g.tpos!==null?`<span>時程已過 ${g.tpos}%</span>`:''}<span class="pill ${g.health[0]}">${g.health[1]}</span>${g.total?'<span>（各任務進度的平均）</span>':'<span>（沒有任務時，以專案設定的進度為準）</span>'}</div></div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>任務<span>${g.done}/${g.total}</span></h3><button type="button" class="btn w-only" data-act="new" data-kind="task" data-project="${esc(id)}">＋ 任務</button></div>
-      ${ts.length?ts.map(([tid,x])=>{const di=dueInfo(x);return `<div class="dtask">${ckBtn(tid,x)}<button type="button" class="amain" data-act="edit" data-kind="task" data-id="${esc(tid)}"><b class="${x.status==='done'?'done-t':''}">${esc(x.title)} ${smp(x)}</b><small>${x.assignee?esc(x.assignee)+' · ':''}${di?`<span class="due ${di[0]}">${di[1]}</span>`:'未設到期日'}</small></button><span class="pill ${x.status==='done'?'ok':x.status==='review'?'warn':x.status==='doing'?'info':''}">${TLABEL[x.status]||'待辦'}</span></div>`;}).join(''):'<p class="muted">還沒有任務。把專案拆成幾個具體步驟，進度就會自動計算。</p>'}
+      ${ts.length?ts.map(([tid,x])=>{const di=dueInfo(x),tp=tpct(x);return `<div class="dtask">${ckBtn(tid,x)}<button type="button" class="amain" data-act="edit" data-kind="task" data-id="${esc(tid)}" aria-label="${esc(x.title)}，執行進度 ${tp}%，按一下修改"><b class="${x.status==='done'?'done-t':''}">${esc(x.title)} ${smp(x)}</b><small>${x.assignee?esc(x.assignee)+' · ':''}${di?`<span class="due ${di[0]}">${di[1]}</span>`:'未設到期日'}</small><span class="dt-prog">${miniBar(c,tp)}<em>${tp}%</em></span></button><span class="pill ${x.status==='done'?'ok':x.status==='review'?'warn':x.status==='doing'?'info':''}">${TLABEL[x.status]||'待辦'}</span></div>`;}).join(''):'<p class="muted">還沒有任務。把專案拆成幾個具體步驟，每個任務有自己的進度，專案進度會自動平均。</p>'}
     </div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>接下來的行程</h3><button type="button" class="btn w-only" data-act="new" data-kind="event" data-project="${esc(id)}">＋ 行程</button></div>
@@ -597,7 +602,7 @@ function projOptions(sel){
 const optList=(pairs,sel)=>pairs.map(([v,l])=>`<option value="${v}"${v===sel?' selected':''}>${l}</option>`).join('');
 function defaults(kind,o){
   if(kind==='event')return {title:'',type:S.cat==='wh'?'inbound':S.cat==='it'?'it':'meeting',date:o.date||(S.view==='calendar'?S.selDay:TODAY()),start:'09:00',end:'10:00',projectId:o.project||'',location:'',note:''};
-  if(kind==='task')return {title:'',projectId:o.project||(S.view==='board'&&P(S.boardProject)?S.boardProject:''),status:'todo',priority:'mid',due:o.date||'',assignee:'',note:''};
+  if(kind==='task')return {title:'',projectId:o.project||(S.view==='board'&&P(S.boardProject)?S.boardProject:''),status:'todo',priority:'mid',due:o.date||'',assignee:'',note:'',progress:0};
   if(kind==='link')return {title:'',url:'',category:S.cat==='all'?'gn':S.cat,note:''};
   const cat=S.cat==='all'?'wh':S.cat;
   return {name:'',category:cat,code:nextCode(cat),status:'active',priority:'mid',start:TODAY(),end:'',owner:'',folder:'',url:'',desc:'',progress:0};
@@ -623,6 +628,7 @@ function formHTML(kind,d,isEdit){
       <label>優先級<select name="priority" id="f-prio">${optList([['high','高'],['mid','中'],['low','低']],d.priority||'mid')}</select></label>
       <label>到期日<input type="date" name="due" id="f-due" value="${esc(d.due)}"></label>
       <label>負責人<input name="assignee" id="f-who" maxlength="30" value="${esc(d.assignee)}" placeholder="姓名"></label>
+      ${(tp=>`<label class="full">執行進度 <output id="f-tprog-out">${tp}%</output><input type="range" name="progress" id="f-tprog" min="0" max="100" step="5" value="${tp}"><span class="hint">這個任務自己做到幾 %。狀態選「已完成」一律算 100%；專案進度是所有任務進度的平均。</span></label>`)(Math.max(0,Math.min(100,Math.round(+d.progress||0))))}
       <label class="full">備註<textarea name="note" id="f-note" maxlength="1000">${esc(d.note)}</textarea></label>`;
   }else if(kind==='link'){
     title=isEdit?'編輯連結':'新增連結';
@@ -643,7 +649,7 @@ function formHTML(kind,d,isEdit){
       <label class="full">資料夾（Claude 用來對應這個專案）<input name="folder" id="f-folder" maxlength="260" value="${esc(d.folder||projFolder(d))}" placeholder="例如：D:\\AI\\採購工作看板App" style="font-family:var(--f-mono)"></label>
       <label class="full">系統網址（「入口」頁的連結）<input type="url" name="url" id="f-url" maxlength="600" value="${esc(d.url||projUrl(d))}" placeholder="例如：https://cheesedukead4.github.io/cheeseduke-fefo/" style="font-family:var(--f-mono)"></label>
       <label class="full">說明<textarea name="desc" id="f-desc" maxlength="2000" placeholder="目標、範圍、注意事項">${esc(d.desc)}</textarea></label>
-      <label class="full">手動進度 <output id="f-prog-out">${Math.round(+d.progress||0)}%</output><input type="range" name="progress" id="f-prog" min="0" max="100" step="5" value="${Math.round(+d.progress||0)}"><span class="hint">專案底下有任務時，進度會改用任務完成比例自動計算。</span></label>`;
+      <label class="full">手動進度 <output id="f-prog-out">${Math.round(+d.progress||0)}%</output><input type="range" name="progress" id="f-prog" min="0" max="100" step="5" value="${Math.round(+d.progress||0)}"><span class="hint">專案底下有任務時，進度會改用所有任務進度的平均自動計算。</span></label>`;
   }
   const del=isEdit&&!ro?`<button type="button" class="btn danger" data-act="del">刪除</button>`:'';
   const who=isEdit&&d.updatedBy?`<p class="muted" style="font-size:12px;margin-top:8px">最後更新：${esc(d.updatedBy)}${d.updatedAt?' · '+esc(new Date(d.updatedAt).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})):''}</p>`:'';
@@ -683,8 +689,10 @@ async function submitForm(form){
     data={title:v('title'),type:ETYPE[v('type')]?v('type'):'other',date:v('date'),start:v('start'),end:v('end'),projectId:v('projectId'),location:v('location'),note:v('note')};
     if(!data.title)err='請填寫行程名稱。';else if(!pd(data.date))err='請選擇行程日期。';else if(data.start&&data.end&&data.end<data.start)err='結束時間不能早於開始時間。';
   }else if(kind==='task'){
-    data={title:v('title'),projectId:v('projectId'),status:TLABEL[v('status')]?v('status'):'todo',priority:PRIO[v('priority')]?v('priority'):'mid',due:v('due'),assignee:v('assignee'),note:v('note')};
+    data={title:v('title'),projectId:v('projectId'),status:TLABEL[v('status')]?v('status'):'todo',priority:PRIO[v('priority')]?v('priority'):'mid',due:v('due'),assignee:v('assignee'),note:v('note'),progress:Math.max(0,Math.min(100,Math.round(+v('progress')||0)))};
     if(!data.title)err='請填寫任務名稱。';
+    // 有進度就是開始做了：待辦自動改成進行中
+    if(data.status==='todo'&&data.progress>0)data.status='doing';
     if(data.status==='done')data.doneAt=(prev&&prev.status==='done'&&prev.doneAt)?prev.doneAt:new Date().toISOString();
   }else if(kind==='link'){
     data={title:v('title'),url:v('url'),category:CAT[v('category')]?v('category'):'gn',note:v('note')};
@@ -879,6 +887,7 @@ document.addEventListener('input',e=>{
   const t=e.target;
   if(t.id==='f-code')t.dataset.auto='0';
   if(t.id==='f-prog'){const o=$('#f-prog-out');if(o)o.textContent=t.value+'%';}
+  if(t.id==='f-tprog'){const o=$('#f-tprog-out');if(o)o.textContent=t.value+'%';}
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
