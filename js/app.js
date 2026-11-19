@@ -9,7 +9,8 @@
  *   links     入口頁的常用連結（不是專案的系統，例如夥伴交接看板）{ id, title, url, category: wh|it|gn, note }
  *   tasks     { id, title, projectId, status: todo|doing|review|done, priority, due, assignee, note, progress (0-100，任務自己的執行進度), doneAt, ... }
  *   events    { id, title, type: inbound|outbound|inventory|it|meeting|other, date, start, end (HH:MM), projectId, location, note, ... }
- *   requests  給 Claude 的留言 { id, projectId, text, status: open|review|approved|done|closed, replies: [{ id, by, text, at }], createdAt, createdBy }
+ *   requests  給 Claude 的留言 { id, projectId, taskId?, taskTitle?, text, status: open|review|approved|done|closed, replies: [{ id, by, text, at }], createdAt, createdBy }
+ *             有 taskId 的是針對某個任務的留言（在任務視窗下方留言），專案詳情也會列出並標「任務：…」。
  *             open 待處理 → Claude 改好、給 demo 後回覆並改成 review 待你確認 → 你按「核准上線」改成 approved → Claude 上線後改成 done。
  *             Claude 端：「倉儲 IT 整合中心」的 Claude 對話每 30 秒檢查一次（開發工具/claude-hub.mjs watch），直接轉給那個專案的 Claude 對話，
  *             用雲端後端的 autoReply 回覆；轉送沒在運作時，打開專案資料夾的 hook 也會讀到留言。
@@ -206,15 +207,30 @@ function openImg(id){
   $('#sheet').innerHTML=`<h2 id="m-title">demo 截圖</h2><img class="rq-big" src="${IMGS[id]}" alt="demo 截圖"><div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">關閉</button></div>`;
   $('#modal').hidden=false;lockScroll();
 }
-function reqHTML([id,r]){
+// 留言是針對哪個任務（任務被改名時用目前的名稱）
+const reqTask=r=>r.taskId?((S.tasks[r.taskId]||{}).title||r.taskTitle||'（任務已刪除）'):'';
+const taskReqs=tid=>E(S.requests).filter(x=>x[1].taskId===tid&&x[1].status!=='closed').sort((a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||''));
+// showTask：在專案詳情裡標出「任務：…」；在任務自己的視窗裡不用標
+function reqHTML([id,r],showTask){
   const st=REQ[r.status]||REQ.open;
+  const tk=showTask===true&&r.taskId?`<span class="rq-task">任務：${esc(reqTask(r))}</span>`:'';
   const replies=(r.replies||[]).map(c=>`<div class="rq-reply${c.by==='Claude'?' ai':''}"><div class="rq-who"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span></div>${c.text?`<p>${esc(c.text)}</p>`:''}${c.images&&c.images.length?`<div class="rq-imgs">${c.images.map(imgTag).join('')}</div>`:''}</div>`).join('');
   const acts=r.status==='review'?`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">核准上線</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`
     :r.status==='open'?`<button type="button" class="btn ghost" data-act="req-cancel" data-id="${esc(id)}">取消留言</button>`:'';
   // 還沒有 Claude 的回覆：顯示等待中（轉送收到後會先回覆「已交給 Claude 的…處理」）
   const rs=r.replies||[],lastBy=rs.length?rs[rs.length-1].by:'';
   const wait=(r.status==='open'||r.status==='approved')&&lastBy!=='Claude'?`<p class="muted rq-wait">${r.status==='approved'?'已核准，等待 Claude 收到後上線…':'等待 Claude 收到…（通常 1 分鐘內會在這裡回覆）'}</p>`:'';
-  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div><p class="rq-t">${esc(r.text)}</p>${replies}${wait}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
+  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span>${tk}<span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div><p class="rq-t">${esc(r.text)}</p>${replies}${wait}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
+}
+// 任務視窗下方：這個任務給 Claude 的留言
+const taskReqList=tid=>{const l=taskReqs(tid);return l.length?l.map(x=>reqHTML(x,false)).join(''):'<p class="muted" style="font-size:12.5px">這個任務還沒有留言。</p>';};
+function taskReqSection(tid){
+  return `<section class="t-rq" aria-label="這個任務給 Claude 的留言">
+    <h3>給 Claude 的留言（這個任務）</h3>
+    <p class="muted rq-hint">只針對這個任務。送出後會直接交給 Claude 處理，不用打開專案；Claude 收到後會在這裡回覆，改好會先附 demo 截圖，你按「核准上線」才會上線。</p>
+    <div id="t-rq-list">${taskReqList(tid)}</div>
+    <div class="rq-new w-only"><textarea id="trq-text" maxlength="2000" placeholder="例如：這一頁的表格加上日期篩選"></textarea><button type="button" class="btn primary" data-act="req-send-task" data-id="${esc(tid)}">送出留言</button></div>
+  </section>`;
 }
 
 /* ================= views ================= */
@@ -308,7 +324,7 @@ function vOverview(){
   const projPanel=`<section class="panel"><div class="ph"><h3>專案進度</h3><button type="button" class="btn ghost" data-act="nav" data-view="projects">全部專案 →</button></div>
     ${plist.length?`<div class="plist">${plist.map(projRow).join('')}</div><p class="legend-note"><i></i>直線標記：依照起訖日期，今天應該完成到的位置</p>`:'<p class="empty">沒有進行中的專案。</p>'}</section>`;
   const rqs=E(S.requests).filter(x=>['open','review','approved'].includes(x[1].status)&&inCat(catP(P(x[1].projectId)))).sort((a,b)=>(a[1].status==='review'?0:1)-(b[1].status==='review'?0:1)||(b[1].updatedAt||'').localeCompare(a[1].updatedAt||''));
-  const reqPanel=rqs.length?`<section class="panel"><div class="ph"><h3>給 Claude 的留言</h3><span class="muted">待你確認 ${rqs.filter(x=>x[1].status==='review').length}</span></div><div class="plist">${rqs.map(([id,r])=>{const p=P(r.projectId),st=REQ[r.status]||REQ.open;return `<button type="button" class="prow" data-act="open-project" data-id="${esc(r.projectId)}"><span class="prow-top">${codeTag(p)}<span class="pill ${st[1]}">${st[0]}</span></span><span class="rq-line">${esc(r.text)}</span></button>`;}).join('')}</div></section>`:'';
+  const reqPanel=rqs.length?`<section class="panel"><div class="ph"><h3>給 Claude 的留言</h3><span class="muted">待你確認 ${rqs.filter(x=>x[1].status==='review').length}</span></div><div class="plist">${rqs.map(([id,r])=>{const p=P(r.projectId),st=REQ[r.status]||REQ.open;return `<button type="button" class="prow" data-act="open-project" data-id="${esc(r.projectId)}"><span class="prow-top">${codeTag(p)}<span class="pill ${st[1]}">${st[0]}</span></span><span class="rq-line">${r.taskId?`〔${esc(reqTask(r))}〕`:''}${esc(r.text)}</span></button>`;}).join('')}</div></section>`:'';
   return head+statusBanner()+kpis+`<div class="ov-grid"><div class="ov-col">${agenda}${attention}</div><div class="ov-col">${reqPanel}${projPanel}</div></div>`;
 }
 function projSort(a,b){
@@ -571,7 +587,7 @@ function renderDrawer(){
     <div class="d-prog">${barHTML(c,g.pct,g.tpos)}<div class="d-prog-meta"><span>整體進度 <b>${g.pct}%</b></span>${g.tpos!==null?`<span>時程已過 ${g.tpos}%</span>`:''}<span class="pill ${g.health[0]}">${g.health[1]}</span>${g.total?'<span>（各任務進度的平均）</span>':'<span>（沒有任務時，以專案設定的進度為準）</span>'}</div></div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>任務<span>${g.done}/${g.total}</span></h3><button type="button" class="btn w-only" data-act="new" data-kind="task" data-project="${esc(id)}">＋ 任務</button></div>
-      ${ts.length?ts.map(([tid,x])=>{const di=dueInfo(x),tp=tpct(x);return `<div class="dtask">${ckBtn(tid,x)}<button type="button" class="amain" data-act="edit" data-kind="task" data-id="${esc(tid)}" aria-label="${esc(x.title)}，執行進度 ${tp}%，按一下修改"><b class="${x.status==='done'?'done-t':''}">${esc(x.title)} ${smp(x)}</b><small>${x.assignee?esc(x.assignee)+' · ':''}${di?`<span class="due ${di[0]}">${di[1]}</span>`:'未設到期日'}</small><span class="dt-prog">${miniBar(c,tp)}<em>${tp}%</em></span></button><span class="pill ${x.status==='done'?'ok':x.status==='review'?'warn':x.status==='doing'?'info':''}">${TLABEL[x.status]||'待辦'}</span></div>`;}).join(''):'<p class="muted">還沒有任務。把專案拆成幾個具體步驟，每個任務有自己的進度，專案進度會自動平均。</p>'}
+      ${ts.length?ts.map(([tid,x])=>{const di=dueInfo(x),tp=tpct(x);return `<div class="dtask">${ckBtn(tid,x)}<button type="button" class="amain" data-act="edit" data-kind="task" data-id="${esc(tid)}" aria-label="${esc(x.title)}，執行進度 ${tp}%，按一下修改"><b class="${x.status==='done'?'done-t':''}">${esc(x.title)} ${smp(x)}</b><small>${x.assignee?esc(x.assignee)+' · ':''}${di?`<span class="due ${di[0]}">${di[1]}</span>`:'未設到期日'}${(l=>l.length?` · <span class="${l.some(q=>q[1].status==='review')?'due warn':''}">留言 ${l.length}${l.some(q=>q[1].status==='review')?'（待你確認）':''}</span>`:'')(taskReqs(tid))}</small><span class="dt-prog">${miniBar(c,tp)}<em>${tp}%</em></span></button><span class="pill ${x.status==='done'?'ok':x.status==='review'?'warn':x.status==='doing'?'info':''}">${TLABEL[x.status]||'待辦'}</span></div>`;}).join(''):'<p class="muted">還沒有任務。把專案拆成幾個具體步驟，每個任務有自己的進度，專案進度會自動平均。</p>'}
     </div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>接下來的行程</h3><button type="button" class="btn w-only" data-act="new" data-kind="event" data-project="${esc(id)}">＋ 行程</button></div>
@@ -579,8 +595,8 @@ function renderDrawer(){
     </div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>給 Claude 的留言</h3></div>
-      <p class="muted rq-hint">送出後會直接交給 Claude 處理，不用打開專案。Claude 收到後會在這裡回覆（電腦上的 Claude 要開著）；改好會先附 demo 截圖，你按「核准上線」才會上線。</p>
-      ${liveReqs(id).map(reqHTML).join('')}
+      <p class="muted rq-hint">送出後會直接交給 Claude 處理，不用打開專案。Claude 收到後會在這裡回覆（電腦上的 Claude 要開著）；改好會先附 demo 截圖，你按「核准上線」才會上線。只針對某個任務的話，點上面那個任務，在任務視窗下方留言。</p>
+      ${liveReqs(id).map(x=>reqHTML(x,true)).join('')}
       <div class="rq-new w-only"><textarea id="rq-text" maxlength="2000" placeholder="例如：首頁的表格加一欄「負責人」"></textarea><button type="button" class="btn primary" data-act="req-send" data-id="${esc(id)}">送出留言</button></div>
     </div>
     ${p.updatedBy?`<p class="muted" style="font-size:12px">最後更新：${esc(p.updatedBy)}${p.updatedAt?' · '+esc(new Date(p.updatedAt).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})):''}</p>`:''}
@@ -666,7 +682,8 @@ function openForm(kind,id,o){
   if(!id&&!S.canWrite)return;
   M={kind,id:id||null,opener:document.activeElement};
   const d=id?Object.assign({},S[coll][id]):defaults(kind,o||{});
-  $('#sheet').innerHTML=formHTML(kind,d,!!id);
+  $('#sheet').innerHTML=formHTML(kind,d,!!id)+(kind==='task'&&id?taskReqSection(id):'');
+  if(kind==='task'&&id)loadImgs();
   $('#modal').hidden=false;lockScroll();
   setTimeout(()=>{const f=$('#f-title');if(f){f.focus();if(!id)f.select();}},0);
 }
@@ -729,11 +746,15 @@ function arm(btn,label,fn){
 }
 
 /* ---------- 給 Claude 的留言 ---------- */
-function sendReq(pid){
-  const ta=$('#rq-text');const t=(ta&&ta.value||'').trim();
+// tid 有值：針對任務的留言（任務視窗裡的留言框）
+function sendReq(pid,tid){
+  const ta=$(tid?'#trq-text':'#rq-text');const t=(ta&&ta.value||'').trim();
   if(!t){toast('請先寫留言內容');if(ta)ta.focus();return;}
-  const iso=new Date().toISOString();
-  put('requests',uid('r'),{projectId:pid,text:t,status:'open',replies:[],createdAt:iso,updatedAt:iso});
+  const iso=new Date().toISOString(),task=tid?S.tasks[tid]:null;
+  if(tid&&!task){toast('這個任務已被刪除');return;}
+  const rec={projectId:pid||(task&&task.projectId)||'',text:t,status:'open',replies:[],createdAt:iso,updatedAt:iso};
+  if(task){rec.taskId=tid;rec.taskTitle=task.title;}
+  put('requests',uid('r'),rec);
   if(ta)ta.value='';
   toast('已送出，Claude 會直接收到並開始處理（約 1 分鐘內在這裡回覆）');
 }
@@ -811,6 +832,8 @@ function render(){
   const lw2=main.querySelector('.lanes-wrap');if(lw2)lw2.scrollLeft=sl;
   if(fk){for(const el of main.querySelectorAll('[data-act]'))if(focusKey(el)===fk){el.focus({preventScroll:true});break;}}
   renderSync();renderFoot();
+  // 任務視窗開著時，留言有新回覆就更新（留言框不動，打到一半的字不會不見）
+  if(M&&M.kind==='task'&&M.id){const l=$('#t-rq-list');if(l){l.innerHTML=taskReqList(M.id);loadImgs();}}
   if(S.openProject||!$('#drawer').hidden){
     const dr=$('#drawer');const dfk=dr.contains(document.activeElement)?focusKey(document.activeElement):null;
     renderDrawer();
@@ -868,6 +891,7 @@ document.addEventListener('click',e=>{
     case 'delete-user':arm(a,'再按一次確認刪除',()=>userCall('userDelete',{email:d.id},`已刪除 ${d.id}`));break;
     case 'backup':exportBackup();break;
     case 'req-send':sendReq(d.id);break;
+    case 'req-send-task':{const t=S.tasks[d.id];if(t)sendReq(t.projectId,d.id);else toast('這個任務已被刪除');break;}
     case 'req-approve':setReq(d.id,{status:'approved'},'已核准，Claude 會直接收到並上線');break;
     case 'req-cancel':arm(a,'再按一次確認取消',()=>setReq(d.id,{status:'closed'},'已取消這則留言'));break;
     case 'req-revise':openRevise(d.id);break;

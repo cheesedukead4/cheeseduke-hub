@@ -425,6 +425,10 @@ html.auth-locked .app{display:none}
 .rq-who{font-size:12px}
 .rq-a{display:flex;flex-wrap:wrap;gap:8px}
 .rq-new{display:grid;gap:8px}
+.rq-task{font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:4px;background:var(--accent-soft);color:var(--fg)}
+/* 任務視窗下方的留言區 */
+.t-rq{display:grid;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.t-rq h3{font-size:15px;font-weight:700}
 .rq-new textarea{width:100%;min-height:72px;resize:vertical;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:14px}
 .rq-line{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .rq-imgs{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
