@@ -1,7 +1,8 @@
 /*
  * 倉儲 IT 整合中心｜全部畫面
  * ---------------------------------------------------------------
- * 頁面：入口（首頁）、總覽、行事曆、專案、進度看板、管理（人員與權限、備份，只有管理員）。網址 #portal #overview #calendar #projects #board #users。
+ * 頁面：入口（首頁）、總覽、行事曆、專案、進度看板、工程師討論（有委外專案才顯示）、管理（人員與權限、備份，只有管理員）。
+ *       網址 #portal #overview #calendar #projects #board #vendor #users。
  * 資料（WIStore，見 cloud-store.js），每一筆都有 id：
  *   projects  { id, code, name, category: wh|it|gn, status: plan|active|hold|done, priority: high|mid|low,
  *               start, end (YYYY-MM-DD), owner, folder, url (系統網址，入口頁用), desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
@@ -24,7 +25,7 @@
 
 /* ================= constants ================= */
 const WD=['日','一','二','三','四','五','六'];
-const VIEWS=['portal','overview','calendar','projects','board','users'];
+const VIEWS=['portal','overview','calendar','projects','board','vendor','users'];
 const COLL={event:'events',task:'tasks',project:'projects',link:'links'};
 const CAT={wh:'倉儲',it:'IT',gn:'綜合'};
 const PSTATUS={plan:['規劃中',''],active:['進行中','info'],hold:['暫停','warn'],done:['已完成','ok']};
@@ -610,7 +611,7 @@ function downloadFile(filename,content,mime){
 }
 function exportBackup(){
   const strip=kind=>ST.list(kind).map(r=>JSON.parse(JSON.stringify(r)));
-  downloadFile(`倉儲IT整合中心_備份_${TODAY()}.json`,JSON.stringify({app:BACKUP_APP,version:1,exportedAt:new Date().toISOString(),exportedBy:myName(),projects:strip('projects'),tasks:strip('tasks'),events:strip('events'),links:strip('links')},null,2),'application/json;charset=utf-8');
+  downloadFile(`倉儲IT整合中心_備份_${TODAY()}.json`,JSON.stringify({app:BACKUP_APP,version:1,exportedAt:new Date().toISOString(),exportedBy:myName(),projects:strip('projects'),tasks:strip('tasks'),events:strip('events'),links:strip('links'),requests:strip('requests')},null,2),'application/json;charset=utf-8');
 }
 let pendingImport=null;
 function readImport(file){
@@ -621,12 +622,13 @@ function readImport(file){
     if(!o||o.app!==BACKUP_APP||!okArr(o.projects)||!okArr(o.tasks)||!okArr(o.events)){toast('這不是倉儲 IT 整合中心的備份檔。');return;}
     if(o.events.some(e=>!pd(e.date))){toast('備份裡有行程缺少日期，無法匯入。');return;}
     if(o.links!=null&&!okArr(o.links)){toast('備份裡的常用連結格式不對，無法匯入。');return;}
+    if(o.requests!=null&&!okArr(o.requests)){toast('備份裡的留言格式不對，無法匯入。');return;}
     pendingImport=o;
     M={kind:'import',id:null,opener:document.activeElement};
     $('#sheet').innerHTML=`<form id="m-form" novalidate>
       <h2 id="m-title">匯入 JSON 備份？</h2>
       <p>將以「${esc(file.name)}」取代雲端上所有人共用的資料：</p>
-      <ul><li>專案 ${o.projects.length} 個</li><li>任務 ${o.tasks.length} 筆</li><li>行程 ${o.events.length} 個</li>${o.links?`<li>常用連結 ${o.links.length} 個</li>`:''}</ul>
+      <ul><li>專案 ${o.projects.length} 個</li><li>任務 ${o.tasks.length} 筆</li><li>行程 ${o.events.length} 個</li>${o.links?`<li>常用連結 ${o.links.length} 個</li>`:''}${o.requests?`<li>留言與工程師討論 ${o.requests.length} 則</li>`:''}</ul>
       <p class="muted">目前的 ${Object.keys(S.projects).length} 個專案、${Object.keys(S.tasks).length} 筆任務、${Object.keys(S.events).length} 個行程會被取代。建議先下載目前的備份。</p>
       <p class="ferr" id="ferr" role="alert"></p>
       <div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">取消</button><button type="submit" class="btn danger armed" id="f-save">匯入並取代</button></div>
@@ -639,7 +641,7 @@ function readImport(file){
 function doImport(){
   const o=pendingImport;pendingImport=null;if(!o)return;
   // 舊的備份沒有常用連結：保留目前的連結，不清掉
-  const kinds={projects:o.projects,tasks:o.tasks,events:o.events};if(o.links)kinds.links=o.links;
+  const kinds={projects:o.projects,tasks:o.tasks,events:o.events};if(o.links)kinds.links=o.links;if(o.requests)kinds.requests=o.requests;
   try{ST.replaceKinds(kinds);closeModal();S.openProject=null;toast(`已匯入 ${o.projects.length} 個專案、${o.tasks.length} 筆任務、${o.events.length} 個行程`);}
   catch(e){$('#ferr').textContent='匯入失敗：'+e.message;}
 }
@@ -905,7 +907,38 @@ function vlBody(pid){
       return `<article class="vl-item"><div class="vl-h"><b>${n}.</b><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div>
         ${r.brief?`<div class="vl-brief">${esc(r.brief)}</div><p class="vl-orig"><span class="muted">原始留言：</span>${esc(r.text||'（只有圖片）')}</p>`:`<div class="vl-brief vl-raw"><span class="muted">（Claude 還沒整理）</span>\n${esc(r.text||'（只有圖片）')}</div>`}
         ${imgsHTML((r.images||[]).concat(...(r.replies||[]).filter(c=>c.by!=='Claude').map(c=>c.images||[])))}
+        ${vlActs(id,r)}
       </article>`;}).join('')}</section>`).join('');
+}
+// 清單上直接確認／標記已討論；「打開留言」回到任務視窗看完整對話
+function vlActs(id,r){
+  let a='';
+  if(r.status==='review')a=`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">確認，列入討論清單</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`;
+  else if(r.status==='approved')a=`<button type="button" class="btn primary" data-act="req-discussed" data-id="${esc(id)}">已跟工程師討論</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">補充</button>`;
+  else if(r.status==='open')a=`<span class="muted" style="font-size:12.5px">等待 Claude 整理…</span>`;
+  const open=r.taskId&&S.tasks[r.taskId]?`<button type="button" class="linkbtn" data-act="edit" data-kind="task" data-id="${esc(r.taskId)}">打開留言</button>`:`<button type="button" class="linkbtn" data-act="open-project" data-id="${esc(r.projectId)}">打開專案</button>`;
+  return `<div class="vl-acts no-print w-only">${a}<span class="sp"></span>${open}</div>`;
+}
+/* ---------- 「工程師討論」分頁：所有委外專案要跟工程師討論的事項 ---------- */
+const vendorProjects=()=>E(S.projects).filter(([,p])=>p.vendor).sort((a,b)=>(a[1].code||'').localeCompare(b[1].code||''));
+const vendorReqs=()=>E(S.requests).filter(([,r])=>r.status!=='closed'&&isVendorReq(r));
+function vVendor(){
+  if(!VL_FILTER[S.vlFilter])S.vlFilter='open';
+  const vps=vendorProjects(),all=vendorReqs(),n=s=>all.filter(x=>x[1].status===s).length;
+  const seg=`<div class="seg" role="group" aria-label="篩選">${Object.entries(VL_FILTER).map(([k,[l]])=>`<button type="button" data-act="vl-filter" data-status="${k}" aria-pressed="${S.vlFilter===k}">${l}</button>`).join('')}</div>`;
+  const head=`<section class="vhead"><div><p class="eyebrow">工程師討論</p><h1>要跟委外工程師討論的事項<small>${TODAY().replace(/-/g,'/')}</small></h1></div>
+    <div class="vtools no-print">${seg}<button type="button" class="btn" data-act="vl-copy">複製文字</button><button type="button" class="btn" data-act="vl-print">列印／存成 PDF</button></div></section>`;
+  if(!vps.length)return head+statusBanner()+`<section class="panel"><p class="empty">還沒有委外工程師負責的專案。到「專案」打開專案，按「編輯專案」勾選「委外工程師負責」，那個專案的留言就會整理到這裡。</p></section>`;
+  const sum=`<section class="vv-sum">
+    <div class="kpi${n('review')?' alert':''}"><span class="kl">已整理，待你確認</span><b class="kn">${n('review')}</b></div>
+    <div class="kpi"><span class="kl">待跟工程師討論</span><b class="kn">${n('approved')}</b></div>
+    <div class="kpi"><span class="kl">Claude 整理中</span><b class="kn">${n('open')}</b></div>
+    <div class="kpi"><span class="kl">已討論</span><b class="kn">${n('done')}</b></div>
+  </section>
+  <p class="muted vv-note no-print">怎麼用：在專案的任務視窗下方留言（可以貼截圖）→ Claude 整理成討論重點 →「確認，列入討論清單」→ 跟工程師討論完按「已跟工程師討論」。資料存在整合中心的雲端資料（每天自動備份），圖片存在雲端硬碟「留言截圖」。</p>`;
+  const body=vps.map(([pid,p])=>{const u=projUrl(p);
+    return `<section class="panel vv-proj"><div class="ph"><h3>${codeTag(p)} ${esc(p.name)}</h3>${u?`<a class="btn ghost no-print" href="${esc(u)}" target="_blank" rel="noopener">開啟系統 ↗</a>`:''}</div><div class="vv-body">${vlBody(pid)}</div></section>`;}).join('');
+  return head+statusBanner()+sum+body;
 }
 function vlText(pid){
   const p=P(pid)||{},gs=vlGroups(pid);let n=0;
@@ -937,8 +970,10 @@ function vlRefresh(){
   document.querySelectorAll('[data-act=vl-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.status===S.vlFilter)));
 }
 async function vlCopy(){
-  if(!M||M.kind!=='vlist')return;
-  try{await navigator.clipboard.writeText(vlText(M.id));toast('已複製，可以貼到 LINE 或 Email 給工程師');}
+  // 專案的討論清單視窗：只複製這個專案；「工程師討論」分頁：所有委外專案
+  const txt=M&&M.kind==='vlist'?vlText(M.id):vendorProjects().map(([pid])=>vlText(pid)).join('\n\n');
+  if(!txt)return;
+  try{await navigator.clipboard.writeText(txt);toast('已複製，可以貼到 LINE 或 Email 給工程師');}
   catch(e){toast('複製失敗，請改用「列印／存成 PDF」');}
 }
 
@@ -985,7 +1020,8 @@ function render(){
   const fk=main.contains(document.activeElement)?focusKey(document.activeElement):null;
   const lw=main.querySelector('.lanes-wrap');const sl=lw?lw.scrollLeft:0;
   S.loaded=!!ST.status().loaded;
-  main.innerHTML=S.view==='users'?vUsers():!S.loaded?loadingHTML():({portal:vPortal,overview:vOverview,calendar:vCalendar,projects:vProjects,board:vBoard}[S.view]||vPortal)();
+  main.innerHTML=S.view==='users'?vUsers():!S.loaded?loadingHTML():({portal:vPortal,overview:vOverview,calendar:vCalendar,projects:vProjects,board:vBoard,vendor:vVendor}[S.view]||vPortal)();
+  document.body.classList.toggle('print-view',S.view==='vendor');
   const lw2=main.querySelector('.lanes-wrap');if(lw2)lw2.scrollLeft=sl;
   if(fk){for(const el of main.querySelectorAll('[data-act]'))if(focusKey(el)===fk){el.focus({preventScroll:true});break;}}
   renderSync();renderFoot();renderAlert();
@@ -1011,6 +1047,10 @@ function renderAlert(){
   const n=E(S.requests).filter(x=>x[1].status==='review').length,b=$('#nb-review');
   if(b){b.textContent=n;b.hidden=!n;b.setAttribute('aria-label',`${n} 個待你確認`);}
   document.title=n?`(${n}) 待你確認｜${BASE_TITLE}`:BASE_TITLE;
+  // 「工程師討論」分頁：有委外專案才顯示；數字＝待你確認＋待跟工程師討論
+  const tab=document.querySelector('.tabs [data-view=vendor]'),vb=$('#nb-vendor');
+  if(tab)tab.hidden=!vendorProjects().length;
+  if(vb){const m=vendorReqs().filter(x=>x[1].status==='review'||x[1].status==='approved').length;vb.textContent=m;vb.hidden=!m;vb.setAttribute('aria-label',`${m} 件要處理`);}
 }
 function renderFoot(){
   const n=c=>Object.keys(S[c]).length;
@@ -1060,7 +1100,7 @@ document.addEventListener('click',e=>{
     case 'req-approve':{const r=S.requests[d.id];setReq(d.id,{status:'approved'},r&&isVendorReq(r)?'已列入「工程師討論清單」':'已核准，Claude 會直接收到並上線');break;}
     case 'req-discussed':setReq(d.id,{status:'done'},'已標記為「已跟工程師討論」');break;
     case 'vendor-list':openVendorList(d.id);break;
-    case 'vl-filter':S.vlFilter=d.status;vlRefresh();break;
+    case 'vl-filter':S.vlFilter=d.status;if(M&&M.kind==='vlist')vlRefresh();else render();break;
     case 'vl-copy':vlCopy();break;
     case 'vl-print':window.print();break;
     case 'img-pick':{const f=$('#imgFile');f.dataset.key=d.key;f.value='';f.click();break;}

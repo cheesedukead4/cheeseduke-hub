@@ -471,6 +471,21 @@ html.auth-locked .app{display:none}
 .vl-brief{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6}
 .vl-raw{color:var(--fg)}
 .vl-orig{font-size:12.5px;overflow-wrap:anywhere}
+.vl-acts{display:flex;align-items:center;flex-wrap:wrap;gap:8px;border-top:1px dashed var(--line);padding-top:8px}
+.vl-acts .sp{flex:1}
+.vl-acts .linkbtn{border:0;background:transparent;color:var(--fg);text-decoration:underline;text-underline-offset:3px;padding:4px 0;font-size:12.5px}
+/* 「工程師討論」分頁 */
+.vv-sum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.vv-sum .kpi:first-child{border-left:0}
+.vv-note{font-size:12.5px;max-width:80ch}
+.vv-proj .vv-body{padding:0 18px 14px}
+.vv-proj .vl-grp:first-child{border-top:0}
+@media (max-width:760px){.vv-sum{grid-template-columns:repeat(2,minmax(0,1fr))}.vv-sum .kpi:nth-child(3){border-left:0}.vv-sum .kpi:nth-child(n+3){border-top:1px solid var(--line)}}
+@media print{
+  body.print-view .top,body.print-view .foot,body.print-view #drawer,body.print-view .toast,body.print-view .banner{display:none!important}
+  body.print-view{background:#fff;color:#000}
+  body.print-view .panel{border-color:#bbb;break-inside:auto}
+}
 @media print{
   body.print-sheet .app,body.print-sheet #drawer,body.print-sheet .toast{display:none!important}
   body.print-sheet #modal{position:static!important;display:block!important;background:none!important;padding:0!important}
