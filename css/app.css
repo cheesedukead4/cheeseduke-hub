@@ -410,6 +410,9 @@ html.auth-locked .app{display:none}
 .rq{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:8px;background:var(--surface)}
 .rq-h{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:12px}
 .rq-t{white-space:pre-wrap;overflow-wrap:anywhere}
+.rq-wait{font-size:12.5px;display:flex;align-items:center;gap:6px}
+.rq-wait::before{content:"";width:7px;height:7px;border-radius:999px;background:var(--info);flex:none;animation:rq-pulse 1.6s ease-in-out infinite}
+@keyframes rq-pulse{50%{opacity:.25}}
 .rq-reply{border-left:3px solid var(--line);padding:4px 0 4px 10px;display:grid;gap:2px;font-size:13px}
 .rq-reply.ai{border-left-color:var(--accent);background:var(--accent-soft);border-radius:0 8px 8px 0;padding-right:10px}
 .rq-reply p{white-space:pre-wrap;overflow-wrap:anywhere}

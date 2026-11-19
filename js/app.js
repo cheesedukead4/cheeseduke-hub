@@ -11,7 +11,8 @@
  *   events    { id, title, type: inbound|outbound|inventory|it|meeting|other, date, start, end (HH:MM), projectId, location, note, ... }
  *   requests  給 Claude 的留言 { id, projectId, text, status: open|review|approved|done|closed, replies: [{ id, by, text, at }], createdAt, createdBy }
  *             open 待處理 → Claude 改好、給 demo 後回覆並改成 review 待你確認 → 你按「核准上線」改成 approved → Claude 上線後改成 done。
- *             Claude 端：本機的 Claude Code hook（開發工具/claude-hub.mjs）在打開專案資料夾時讀到留言，用雲端後端的 autoReply 回覆。
+ *             Claude 端：「倉儲 IT 整合中心」的 Claude 對話每 30 秒檢查一次（開發工具/claude-hub.mjs watch），直接轉給那個專案的 Claude 對話，
+ *             用雲端後端的 autoReply 回覆；轉送沒在運作時，打開專案資料夾的 hook 也會讀到留言。
  * 專案的資料夾（folder，或說明裡的「資料夾：路徑」）用來對應 Claude 打開的資料夾。
  * 專案進度＝完成的任務數 ÷ 全部任務數；沒有任務時用 progress。
  * 權限：WIAuth.can('edit') 可以新增、修改、刪除；管理員全部都有。這是畫面權限，雲端後端只擋「不在名單的人」。
@@ -206,7 +207,10 @@ function reqHTML([id,r]){
   const replies=(r.replies||[]).map(c=>`<div class="rq-reply${c.by==='Claude'?' ai':''}"><div class="rq-who"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span></div>${c.text?`<p>${esc(c.text)}</p>`:''}${c.images&&c.images.length?`<div class="rq-imgs">${c.images.map(imgTag).join('')}</div>`:''}</div>`).join('');
   const acts=r.status==='review'?`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">核准上線</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`
     :r.status==='open'?`<button type="button" class="btn ghost" data-act="req-cancel" data-id="${esc(id)}">取消留言</button>`:'';
-  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div><p class="rq-t">${esc(r.text)}</p>${replies}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
+  // 還沒有 Claude 的回覆：顯示等待中（轉送收到後會先回覆「已交給 Claude 的…處理」）
+  const rs=r.replies||[],lastBy=rs.length?rs[rs.length-1].by:'';
+  const wait=(r.status==='open'||r.status==='approved')&&lastBy!=='Claude'?`<p class="muted rq-wait">${r.status==='approved'?'已核准，等待 Claude 收到後上線…':'等待 Claude 收到…（通常 1 分鐘內會在這裡回覆）'}</p>`:'';
+  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div><p class="rq-t">${esc(r.text)}</p>${replies}${wait}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
 }
 
 /* ================= views ================= */
@@ -570,7 +574,7 @@ function renderDrawer(){
     </div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>給 Claude 的留言</h3></div>
-      <p class="muted rq-hint">${projFolder(p)?`下次用 Claude 打開這個專案的資料夾（${esc(projFolder(p))}）時，Claude 會收到待處理的留言。改好會先給你看 demo，你按「核准上線」才會上線。`:'這個專案還沒設定資料夾，Claude 收不到留言。請按「編輯專案」填上資料夾。'}</p>
+      <p class="muted rq-hint">送出後會直接交給 Claude 處理，不用打開專案。Claude 收到後會在這裡回覆（電腦上的 Claude 要開著）；改好會先附 demo 截圖，你按「核准上線」才會上線。</p>
       ${liveReqs(id).map(reqHTML).join('')}
       <div class="rq-new w-only"><textarea id="rq-text" maxlength="2000" placeholder="例如：首頁的表格加一欄「負責人」"></textarea><button type="button" class="btn primary" data-act="req-send" data-id="${esc(id)}">送出留言</button></div>
     </div>
@@ -723,7 +727,7 @@ function sendReq(pid){
   const iso=new Date().toISOString();
   put('requests',uid('r'),{projectId:pid,text:t,status:'open',replies:[],createdAt:iso,updatedAt:iso});
   if(ta)ta.value='';
-  toast(projFolder(P(pid))?'已送出，下次用 Claude 打開這個專案時會處理':'已送出；這個專案還沒設定資料夾，記得在「編輯專案」填上');
+  toast('已送出，Claude 會直接收到並開始處理（約 1 分鐘內在這裡回覆）');
 }
 function setReq(id,patch,msg){
   const r=S.requests[id];if(!r)return;
@@ -748,7 +752,7 @@ function submitRevise(form){
   if(!t){$('#ferr').textContent='請寫要修改的地方。';return;}
   if(!r){closeModal();return;}
   const replies=(r.replies||[]).concat([{id:uid('c'),by:myName(),text:t,at:new Date().toISOString()}]);
-  setReq(M.id,{replies,status:'open'},'已送出，Claude 下次打開這個專案時會再修改');
+  setReq(M.id,{replies,status:'open'},'已送出，Claude 會直接收到並再修改');
   closeModal();
 }
 
@@ -856,7 +860,7 @@ document.addEventListener('click',e=>{
     case 'delete-user':arm(a,'再按一次確認刪除',()=>userCall('userDelete',{email:d.id},`已刪除 ${d.id}`));break;
     case 'backup':exportBackup();break;
     case 'req-send':sendReq(d.id);break;
-    case 'req-approve':setReq(d.id,{status:'approved'},'已核准，Claude 下次打開這個專案時會上線');break;
+    case 'req-approve':setReq(d.id,{status:'approved'},'已核准，Claude 會直接收到並上線');break;
     case 'req-cancel':arm(a,'再按一次確認取消',()=>setReq(d.id,{status:'closed'},'已取消這則留言'));break;
     case 'req-revise':openRevise(d.id);break;
     case 'req-img':openImg(d.id);break;
