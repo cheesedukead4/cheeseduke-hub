@@ -1,41 +1,44 @@
 /* 倉儲 IT 整合中心｜樣式（顏色都用 :root 的變數，深色模式在下面重新定義） */
-/* Layout: sticky header band with a floor-marking stripe; one view at a time below:
-   overview (agenda | project progress), calendar (month grid | day panel),
-   projects (card grid + side drawer), board (four status lanes). */
+/* 依《起士公爵品牌規範速查》（品牌 DNA v0.6＋視覺 CI 色彩規範）：主色公爵綠、輔色公爵金、米金背景、暖墨黑文字；
+   禁止紫／藍／粉當主色。品牌色（--cd-*）照規範的 HEX；分類與狀態色為了小字可讀，用同色系加深一點。
+   Layout: sticky header with a gold-on-green brand band; one view at a time below. */
 :root{
-  --bg:#EDF0F3; --surface:#FFFFFF; --surface-2:#E3E8ED; --line:#D2D9E0;
-  --fg:#141C24; --muted:#56626E; --stripe:#1B232B;
-  --accent:#F2B200; --accent-ink:#1F1800; --accent-soft:#FFF3CC;
-  --wh:#0D7C70; --wh-soft:#DCF0ED; --it:#4453C4; --it-soft:#E4E7FA; --gn:#66717D; --gn-soft:#E6E9EC;
-  --ok:#23804A; --ok-soft:#DDF1E4; --warn:#A35F00; --warn-soft:#FCEED5;
-  --bad:#BE3227; --bad-soft:#FBE2DF; --info:#1D6AB0; --info-soft:#E0ECF8;
-  --focus:#1D6AB0; --scrim:rgba(14,19,24,.45);
-  --shadow:0 1px 2px rgba(20,28,36,.06),0 8px 24px rgba(20,28,36,.10);
+  --cd-green:#0F3F25; --cd-gold:#C9A050; --cd-green-dark:#132D1C; --cd-green-mid:#4A7C59;
+  --cd-gold-deep:#9B7738; --cd-gold-light:#E8C97A; --cd-bg:#F5EDD8; --cd-text:#1E160E;
+  --bg:var(--cd-bg); --surface:#FFFBF2; --surface-2:#EFE4CB; --line:#E2D4B0;
+  --fg:var(--cd-text); --muted:#6B5D47; --stripe:var(--cd-green);
+  --accent:var(--cd-green); --accent-ink:#FFFBF2; --accent-soft:#E3ECE2;
+  --wh:#3F6E4D; --wh-soft:#E1EBDF; --it:#7D5F28; --it-soft:#F3E8CF; --gn:#655D4D; --gn-soft:#ECE5D5;
+  --ok:#2E7D4A; --ok-soft:#DDEEDF; --warn:#B4610E; --warn-soft:#F9E7CF;
+  --bad:#B3261E; --bad-soft:#F8DEDA; --info:#2C6E80; --info-soft:#DCEBEE;
+  --focus:var(--cd-green); --scrim:rgba(19,45,28,.45);
+  --shadow:0 1px 2px rgba(30,22,14,.06),0 8px 24px rgba(30,22,14,.10);
   --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-head:"Noto Serif TC","Noto Sans TC","PMingLiU",serif;
   --f-disp:"Barlow Semi Condensed","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;
   --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --bg:#0E1318; --surface:#161D24; --surface-2:#1F2831; --line:#2C3743;
-    --fg:#E4EAF0; --muted:#95A3B0; --stripe:#0E1318;
-    --accent:#F5BD1F; --accent-ink:#1F1800; --accent-soft:#3A3011;
-    --wh:#3EC2B1; --wh-soft:#123431; --it:#8E9AF3; --it-soft:#232A4E; --gn:#A3AEB9; --gn-soft:#26303A;
-    --ok:#58C47F; --ok-soft:#153222; --warn:#F0A43C; --warn-soft:#3A2A11;
-    --bad:#F26B5F; --bad-soft:#3E1B18; --info:#72B5F2; --info-soft:#14293E;
-    --focus:#80C0FF; --scrim:rgba(0,0,0,.6);
+    --bg:#0D2016; --surface:var(--cd-green-dark); --surface-2:#1A3A26; --line:#2A4B35;
+    --fg:var(--cd-bg); --muted:#BFB293; --stripe:#0D2016;
+    --accent:var(--cd-gold); --accent-ink:var(--cd-green-dark); --accent-soft:#3A3220;
+    --wh:#8DBB97; --wh-soft:#1E3D28; --it:var(--cd-gold-light); --it-soft:#3A3220; --gn:#C4B99E; --gn-soft:#2A3A2E;
+    --ok:#6CC28A; --ok-soft:#16331F; --warn:#F0A848; --warn-soft:#3B2A12;
+    --bad:#F07A6E; --bad-soft:#3E1B18; --info:#86C1CF; --info-soft:#15313A;
+    --focus:var(--cd-gold-light); --scrim:rgba(0,0,0,.6);
     --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.35);
     color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
-  --bg:#0E1318; --surface:#161D24; --surface-2:#1F2831; --line:#2C3743;
-  --fg:#E4EAF0; --muted:#95A3B0; --stripe:#0E1318;
-  --accent:#F5BD1F; --accent-ink:#1F1800; --accent-soft:#3A3011;
-  --wh:#3EC2B1; --wh-soft:#123431; --it:#8E9AF3; --it-soft:#232A4E; --gn:#A3AEB9; --gn-soft:#26303A;
-  --ok:#58C47F; --ok-soft:#153222; --warn:#F0A43C; --warn-soft:#3A2A11;
-  --bad:#F26B5F; --bad-soft:#3E1B18; --info:#72B5F2; --info-soft:#14293E;
-  --focus:#80C0FF; --scrim:rgba(0,0,0,.6);
+  --bg:#0D2016; --surface:var(--cd-green-dark); --surface-2:#1A3A26; --line:#2A4B35;
+  --fg:var(--cd-bg); --muted:#BFB293; --stripe:#0D2016;
+  --accent:var(--cd-gold); --accent-ink:var(--cd-green-dark); --accent-soft:#3A3220;
+  --wh:#8DBB97; --wh-soft:#1E3D28; --it:var(--cd-gold-light); --it-soft:#3A3220; --gn:#C4B99E; --gn-soft:#2A3A2E;
+  --ok:#6CC28A; --ok-soft:#16331F; --warn:#F0A848; --warn-soft:#3B2A12;
+  --bad:#F07A6E; --bad-soft:#3E1B18; --info:#86C1CF; --info-soft:#15313A;
+  --focus:var(--cd-gold-light); --scrim:rgba(0,0,0,.6);
   --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.35);
   color-scheme:dark;
 }
@@ -48,6 +51,8 @@ body.locked{overflow:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 h1,h2,h3,h4{margin:0;text-wrap:balance;line-height:1.25}
+/* 標題用 Noto Serif TC（品牌規範暫用字型） */
+h1,h2,.brand b,.pcard h3,.pt-name,.ph h3,.vl-grp h3,.t-rq h3,.d-sec-h h3{font-family:var(--f-head);font-weight:700}
 p{margin:0}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .muted{color:var(--muted)}
@@ -57,8 +62,9 @@ body.readonly .w-only{display:none!important}
 /* ---------- header ---------- */
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--surface)}
 .top{position:sticky;top:env(safe-area-inset-top,0px);z-index:25;background:var(--surface);padding-bottom:5px}
+/* 品牌條：公爵金細線＋公爵綠 */
 .top::after{content:"";position:absolute;left:0;right:0;bottom:0;height:5px;
-  background:repeating-linear-gradient(-45deg,var(--accent) 0 9px,var(--stripe) 9px 18px)}
+  background:linear-gradient(to bottom,var(--cd-gold) 0 2px,var(--cd-green) 2px 100%)}
 .top-in{display:flex;align-items:center;flex-wrap:wrap;gap:10px 22px;padding-block:10px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .brand .mark{width:34px;height:34px;flex:none}
@@ -453,7 +459,7 @@ html.auth-locked .app{display:none}
 .pend-img button{position:absolute;top:3px;right:3px;width:24px;height:24px;border-radius:999px;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:12px;line-height:1;display:grid;place-items:center}
 .pend-up{display:inline-flex;align-items:center;font-size:12.5px;color:var(--info);padding:0 6px}
 /* Claude 整理的「給工程師的討論重點」 */
-.rq-brief{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;background:var(--accent-soft);padding:8px 10px;display:grid;gap:4px}
+.rq-brief{border:1px solid var(--line);border-left:3px solid var(--cd-gold);border-radius:8px;background:var(--it-soft);padding:8px 10px;display:grid;gap:4px}
 .rq-brief-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:12.5px}
 .rq-brief p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px}
 .fgrid label.chk{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--fg);font-weight:500;cursor:pointer}
