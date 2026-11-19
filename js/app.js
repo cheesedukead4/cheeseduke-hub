@@ -1,10 +1,12 @@
 /*
  * 倉儲 IT 整合中心｜全部畫面
  * ---------------------------------------------------------------
- * 頁面：總覽、行事曆、專案、進度看板、管理（人員與權限、備份，只有管理員）。網址 #overview #calendar #projects #board #users。
+ * 頁面：入口（首頁）、總覽、行事曆、專案、進度看板、管理（人員與權限、備份，只有管理員）。網址 #portal #overview #calendar #projects #board #users。
  * 資料（WIStore，見 cloud-store.js），每一筆都有 id：
  *   projects  { id, code, name, category: wh|it|gn, status: plan|active|hold|done, priority: high|mid|low,
- *               start, end (YYYY-MM-DD), owner, desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
+ *               start, end (YYYY-MM-DD), owner, folder, url (系統網址，入口頁用), desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
+ *             沒填 url 時，用說明裡的「App：網址」或「入口網址：網址」。
+ *   links     入口頁的常用連結（不是專案的系統，例如夥伴交接看板）{ id, title, url, category: wh|it|gn, note }
  *   tasks     { id, title, projectId, status: todo|doing|review|done, priority, due, assignee, note, doneAt, ... }
  *   events    { id, title, type: inbound|outbound|inventory|it|meeting|other, date, start, end (HH:MM), projectId, location, note, ... }
  *   requests  給 Claude 的留言 { id, projectId, text, status: open|review|approved|done|closed, replies: [{ id, by, text, at }], createdAt, createdBy }
@@ -19,8 +21,8 @@
 
 /* ================= constants ================= */
 const WD=['日','一','二','三','四','五','六'];
-const VIEWS=['overview','calendar','projects','board','users'];
-const COLL={event:'events',task:'tasks',project:'projects'};
+const VIEWS=['portal','overview','calendar','projects','board','users'];
+const COLL={event:'events',task:'tasks',project:'projects',link:'links'};
 const CAT={wh:'倉儲',it:'IT',gn:'綜合'};
 const PSTATUS={plan:['規劃中',''],active:['進行中','info'],hold:['暫停','warn'],done:['已完成','ok']};
 const PORDER={active:0,plan:1,hold:2,done:3};
@@ -60,8 +62,8 @@ const myName=()=>(AU&&AU.name())||'';
 
 /* ================= state ================= */
 const S={
-  projects:{},tasks:{},events:{},requests:{},
-  view:'overview',cat:'all',
+  projects:{},tasks:{},events:{},requests:{},links:{},
+  view:'portal',cat:'all',
   calMonth:TODAY().slice(0,7),selDay:TODAY(),
   boardProject:'all',projStatus:'all',showAllDone:false,
   openProject:null,loaded:false
@@ -78,7 +80,7 @@ const inCat=c=>S.cat==='all'||S.cat===c;
 
 function pullFromStore(){
   const m=kind=>{const o={};for(const r of ST.list(kind))if(r&&r.id!=null)o[r.id]=r;return o;};
-  S.projects=m('projects');S.tasks=m('tasks');S.events=m('events');S.requests=m('requests');
+  S.projects=m('projects');S.tasks=m('tasks');S.events=m('events');S.requests=m('requests');S.links=m('links');
 }
 async function put(coll,id,data){
   if(!canEdit()){toast('你目前只有檢視權限，無法修改資料');return false;}
@@ -161,6 +163,21 @@ function taskMeta(t){
 }
 
 function projFolder(p){if(!p)return '';if(p.folder)return String(p.folder);const m=/資料夾：([^\n]+)/.exec(p.desc||'');return m?m[1].trim():'';}
+// 系統網址：只接受 http(s)，避免 javascript: 之類的連結
+const okUrl=u=>/^https?:\/\/[^\s<>"'`]+$/i.test(String(u||'').trim());
+function projUrl(p){
+  if(!p)return '';
+  if(p.url&&okUrl(p.url))return String(p.url).trim();
+  const m=/(?:App|入口網址|網址)：\s*(\S+)/.exec(p.desc||'');
+  return m&&okUrl(m[1])?m[1]:'';
+}
+const isSelf=u=>{try{const x=new URL(u,location.href),q=s=>s.replace(/index\.html$/,'');return x.origin===location.origin&&q(x.pathname)===q(location.pathname);}catch(e){return false;}};
+const siteOf=u=>{try{const x=new URL(u),path=x.pathname.replace(/\/$/,'');
+  if(x.hostname==='script.google.com')return 'Google Apps Script';
+  if(/\.github\.io$/.test(x.hostname))return 'GitHub · '+(path.slice(1)||x.hostname);
+  return x.hostname+path;}catch(e){return u;}};
+// 說明的第一行（跳過「App：」「資料夾：」這類設定行）
+const descLine=p=>{for(const l of String(p.desc||'').split('\n')){const t=l.trim();if(t&&!/^(App|資料夾|入口網址|網址)：/.test(t))return t;}return '';};
 const whenTxt=iso=>iso?new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
 const liveReqs=pid=>E(S.requests).filter(x=>x[1].projectId===pid&&x[1].status!=='closed').sort((a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||''));
 // 留言回覆的 demo 截圖：登入後向雲端讀（reqImg），讀過的留在記憶體
@@ -205,6 +222,48 @@ function statusBanner(){
   if(AU&&AU.user()&&!canEdit())b.push('<div class="banner"><p>你目前只能查看資料。需要新增或修改專案、任務、行程的話，請找管理員開權限。</p></div>');
   return b.join('');
 }
+/* ---------- 入口：所有系統的連結（首頁） ---------- */
+function vPortal(){
+  const ps=E(S.projects).filter(x=>inCat(catP(x[1]))).sort((a,b)=>(a[1].code||'').localeCompare(b[1].code||''));
+  const withUrl=ps.filter(x=>projUrl(x[1])&&!isSelf(projUrl(x[1])));
+  const noUrl=ps.filter(x=>!projUrl(x[1]));
+  const lcat=l=>CAT[l.category]?l.category:'gn';
+  const links=E(S.links).filter(x=>okUrl(x[1].url)&&inCat(lcat(x[1]))).sort((a,b)=>(a[1].title||'').localeCompare(b[1].title||'','zh-Hant'));
+  const ext=u=>`href="${esc(u)}" target="_blank" rel="noopener"`;
+  const goLine=u=>`<span class="pt-go"><span class="pt-site">${esc(siteOf(u))}</span><span class="pt-arrow" aria-hidden="true">開啟 ↗</span></span>`;
+  const pTiles=withUrl.map(([id,p])=>{
+    const c=catP(p),u=projUrl(p),n=liveReqs(id).filter(x=>x[1].status==='review').length,dl=descLine(p);
+    return `<article class="ptile c-${c}">
+      <a class="pt-main" ${ext(u)} aria-label="在新分頁開啟 ${esc(p.code||'')} ${esc(p.name)}">
+        <span class="pt-top">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${p.status!=='active'?statusPill(p):''}</span>
+        <b class="pt-name">${esc(p.name)}</b>
+        ${dl?`<span class="pt-desc">${esc(dl)}</span>`:''}
+        ${goLine(u)}
+      </a>
+      <div class="pt-foot"><button type="button" class="linkbtn" data-act="open-project" data-id="${esc(id)}">專案詳情</button>${n?`<span class="pill warn">${n} 則留言待你確認</span>`:''}</div>
+    </article>`;
+  }).join('');
+  const lTiles=links.map(([id,l])=>{
+    const c=lcat(l);
+    return `<article class="ptile c-${c}">
+      <a class="pt-main" ${ext(l.url)} aria-label="在新分頁開啟 ${esc(l.title)}">
+        <span class="pt-top"><span class="tag c-${c}">${CAT[c]}</span><span class="pt-kind">常用連結</span></span>
+        <b class="pt-name">${esc(l.title)}</b>
+        ${l.note?`<span class="pt-desc">${esc(l.note)}</span>`:''}
+        ${goLine(l.url)}
+      </a>
+      <div class="pt-foot w-only"><button type="button" class="linkbtn" data-act="edit" data-kind="link" data-id="${esc(id)}">編輯連結</button></div>
+    </article>`;
+  }).join('');
+  const sec=(t,sub,body)=>`<section class="psec" aria-label="${t}"><div class="psec-h"><h2>${t}</h2>${sub?`<span class="muted">${sub}</span>`:''}</div>${body}</section>`;
+  const head=`<section class="vhead"><div><p class="eyebrow">系統入口</p><h1>所有系統，一鍵進入<small>${withUrl.length+links.length} 個系統</small></h1></div><div class="vtools w-only"><button type="button" class="btn primary" data-act="new" data-kind="link">＋ 新增連結</button></div></section>`;
+  let out=head+statusBanner();
+  out+=sec('專案系統','在新分頁開啟',withUrl.length?`<div class="ptiles">${pTiles}</div>`:`<div class="panel"><p class="empty">還沒有設定網址的專案。到專案按「編輯專案」填上「系統網址」，就會出現在這裡。</p></div>`);
+  out+=sec('常用連結','不是專案、但常用的系統',links.length?`<div class="ptiles">${lTiles}</div>`:`<div class="panel"><p class="empty">還沒有常用連結。${S.canWrite?'按「＋ 新增連結」加入，例如夥伴交接看板、共用試算表。':''}</p></div>`);
+  if(noUrl.length)out+=sec('尚未設定網址',`${noUrl.length} 個專案`,`<div class="panel nurl-list">${noUrl.map(([id,p])=>`<div class="nurl"><button type="button" class="amain c-${catP(p)}" data-act="open-project" data-id="${esc(id)}"><b>${esc(p.code||'')} ${esc(p.name)}</b><small>${esc(descLine(p)||'沒有說明')}</small></button><button type="button" class="btn w-only" data-act="edit" data-kind="project" data-id="${esc(id)}">設定網址</button></div>`).join('')}</div>`);
+  return out;
+}
+
 function vOverview(){
   const t=TODAY(),d=new Date();
   const head=`<section class="vhead"><div><p class="eyebrow">第 ${isoWeek(d)} 週 · ${d.getFullYear()}</p><h1>${d.getMonth()+1}月${d.getDate()}日 星期${WD[d.getDay()]}</h1></div></section>`;
@@ -445,7 +504,7 @@ function downloadFile(filename,content,mime){
 }
 function exportBackup(){
   const strip=kind=>ST.list(kind).map(r=>JSON.parse(JSON.stringify(r)));
-  downloadFile(`倉儲IT整合中心_備份_${TODAY()}.json`,JSON.stringify({app:BACKUP_APP,version:1,exportedAt:new Date().toISOString(),exportedBy:myName(),projects:strip('projects'),tasks:strip('tasks'),events:strip('events')},null,2),'application/json;charset=utf-8');
+  downloadFile(`倉儲IT整合中心_備份_${TODAY()}.json`,JSON.stringify({app:BACKUP_APP,version:1,exportedAt:new Date().toISOString(),exportedBy:myName(),projects:strip('projects'),tasks:strip('tasks'),events:strip('events'),links:strip('links')},null,2),'application/json;charset=utf-8');
 }
 let pendingImport=null;
 function readImport(file){
@@ -455,12 +514,13 @@ function readImport(file){
     const okArr=a=>Array.isArray(a)&&a.every(x=>x&&typeof x==='object'&&x.id!=null);
     if(!o||o.app!==BACKUP_APP||!okArr(o.projects)||!okArr(o.tasks)||!okArr(o.events)){toast('這不是倉儲 IT 整合中心的備份檔。');return;}
     if(o.events.some(e=>!pd(e.date))){toast('備份裡有行程缺少日期，無法匯入。');return;}
+    if(o.links!=null&&!okArr(o.links)){toast('備份裡的常用連結格式不對，無法匯入。');return;}
     pendingImport=o;
     M={kind:'import',id:null,opener:document.activeElement};
     $('#sheet').innerHTML=`<form id="m-form" novalidate>
       <h2 id="m-title">匯入 JSON 備份？</h2>
       <p>將以「${esc(file.name)}」取代雲端上所有人共用的資料：</p>
-      <ul><li>專案 ${o.projects.length} 個</li><li>任務 ${o.tasks.length} 筆</li><li>行程 ${o.events.length} 個</li></ul>
+      <ul><li>專案 ${o.projects.length} 個</li><li>任務 ${o.tasks.length} 筆</li><li>行程 ${o.events.length} 個</li>${o.links?`<li>常用連結 ${o.links.length} 個</li>`:''}</ul>
       <p class="muted">目前的 ${Object.keys(S.projects).length} 個專案、${Object.keys(S.tasks).length} 筆任務、${Object.keys(S.events).length} 個行程會被取代。建議先下載目前的備份。</p>
       <p class="ferr" id="ferr" role="alert"></p>
       <div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">取消</button><button type="submit" class="btn danger armed" id="f-save">匯入並取代</button></div>
@@ -472,7 +532,9 @@ function readImport(file){
 }
 function doImport(){
   const o=pendingImport;pendingImport=null;if(!o)return;
-  try{ST.replaceKinds({projects:o.projects,tasks:o.tasks,events:o.events});closeModal();S.openProject=null;toast(`已匯入 ${o.projects.length} 個專案、${o.tasks.length} 筆任務、${o.events.length} 個行程`);}
+  // 舊的備份沒有常用連結：保留目前的連結，不清掉
+  const kinds={projects:o.projects,tasks:o.tasks,events:o.events};if(o.links)kinds.links=o.links;
+  try{ST.replaceKinds(kinds);closeModal();S.openProject=null;toast(`已匯入 ${o.projects.length} 個專案、${o.tasks.length} 筆任務、${o.events.length} 個行程`);}
   catch(e){$('#ferr').textContent='匯入失敗：'+e.message;}
 }
 
@@ -489,6 +551,7 @@ function renderDrawer(){
   el.innerHTML=`<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title">
     <div class="d-head">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${statusPill(p)}${smp(p)}<button type="button" class="btn ghost icon" data-act="close-drawer" aria-label="關閉專案詳情">✕</button></div>
     <h2 id="d-title">${esc(p.name)}</h2>
+    ${(u=>u&&!isSelf(u)?`<a class="btn primary d-open" href="${esc(u)}" target="_blank" rel="noopener">開啟系統 ↗<span class="d-site">${esc(siteOf(u))}</span></a>`:'')(projUrl(p))}
     <dl class="facts">
       <div><dt>負責人</dt><dd>${esc(p.owner)||'—'}</dd></div>
       <div><dt>優先級</dt><dd>${PRIO[p.priority]||'中'}</dd></div>
@@ -531,8 +594,9 @@ const optList=(pairs,sel)=>pairs.map(([v,l])=>`<option value="${v}"${v===sel?' s
 function defaults(kind,o){
   if(kind==='event')return {title:'',type:S.cat==='wh'?'inbound':S.cat==='it'?'it':'meeting',date:o.date||(S.view==='calendar'?S.selDay:TODAY()),start:'09:00',end:'10:00',projectId:o.project||'',location:'',note:''};
   if(kind==='task')return {title:'',projectId:o.project||(S.view==='board'&&P(S.boardProject)?S.boardProject:''),status:'todo',priority:'mid',due:o.date||'',assignee:'',note:''};
+  if(kind==='link')return {title:'',url:'',category:S.cat==='all'?'gn':S.cat,note:''};
   const cat=S.cat==='all'?'wh':S.cat;
-  return {name:'',category:cat,code:nextCode(cat),status:'active',priority:'mid',start:TODAY(),end:'',owner:'',desc:'',progress:0};
+  return {name:'',category:cat,code:nextCode(cat),status:'active',priority:'mid',start:TODAY(),end:'',owner:'',folder:'',url:'',desc:'',progress:0};
 }
 function formHTML(kind,d,isEdit){
   const ro=!S.canWrite;
@@ -556,6 +620,12 @@ function formHTML(kind,d,isEdit){
       <label>到期日<input type="date" name="due" id="f-due" value="${esc(d.due)}"></label>
       <label>負責人<input name="assignee" id="f-who" maxlength="30" value="${esc(d.assignee)}" placeholder="姓名"></label>
       <label class="full">備註<textarea name="note" id="f-note" maxlength="1000">${esc(d.note)}</textarea></label>`;
+  }else if(kind==='link'){
+    title=isEdit?'編輯連結':'新增連結';
+    body=`<label class="full">名稱 <span class="req">*</span><input name="title" id="f-title" maxlength="60" value="${esc(d.title)}" placeholder="例如：夥伴交接看板" required></label>
+      <label class="full">網址 <span class="req">*</span><input type="url" name="url" id="f-url" maxlength="600" value="${esc(d.url)}" placeholder="https://…" required style="font-family:var(--f-mono)"></label>
+      <label>類別<select name="category" id="f-lcat">${optList([['wh','倉儲'],['it','IT'],['gn','綜合']],d.category||'gn')}</select></label>
+      <label class="full">說明<textarea name="note" id="f-note" maxlength="300" placeholder="這個系統是做什麼用的">${esc(d.note)}</textarea></label>`;
   }else{
     title=isEdit?'編輯專案':'新增專案';
     body=`<label class="full">專案名稱 <span class="req">*</span><input name="name" id="f-title" maxlength="60" value="${esc(d.name)}" placeholder="例如：2026 年終盤點" required></label>
@@ -567,6 +637,7 @@ function formHTML(kind,d,isEdit){
       <label>截止日<input type="date" name="end" id="f-end" value="${esc(d.end)}"></label>
       <label class="full">負責人<input name="owner" id="f-owner" maxlength="30" value="${esc(d.owner)}" placeholder="姓名"></label>
       <label class="full">資料夾（Claude 用來對應這個專案）<input name="folder" id="f-folder" maxlength="260" value="${esc(d.folder||projFolder(d))}" placeholder="例如：D:\\AI\\採購工作看板App" style="font-family:var(--f-mono)"></label>
+      <label class="full">系統網址（「入口」頁的連結）<input type="url" name="url" id="f-url" maxlength="600" value="${esc(d.url||projUrl(d))}" placeholder="例如：https://cheesedukead4.github.io/cheeseduke-fefo/" style="font-family:var(--f-mono)"></label>
       <label class="full">說明<textarea name="desc" id="f-desc" maxlength="2000" placeholder="目標、範圍、注意事項">${esc(d.desc)}</textarea></label>
       <label class="full">手動進度 <output id="f-prog-out">${Math.round(+d.progress||0)}%</output><input type="range" name="progress" id="f-prog" min="0" max="100" step="5" value="${Math.round(+d.progress||0)}"><span class="hint">專案底下有任務時，進度會改用任務完成比例自動計算。</span></label>`;
   }
@@ -611,11 +682,14 @@ async function submitForm(form){
     data={title:v('title'),projectId:v('projectId'),status:TLABEL[v('status')]?v('status'):'todo',priority:PRIO[v('priority')]?v('priority'):'mid',due:v('due'),assignee:v('assignee'),note:v('note')};
     if(!data.title)err='請填寫任務名稱。';
     if(data.status==='done')data.doneAt=(prev&&prev.status==='done'&&prev.doneAt)?prev.doneAt:new Date().toISOString();
+  }else if(kind==='link'){
+    data={title:v('title'),url:v('url'),category:CAT[v('category')]?v('category'):'gn',note:v('note')};
+    if(!data.title)err='請填寫名稱。';else if(!okUrl(data.url))err='請填寫正確的網址（https:// 開頭）。';
   }else{
-    data={name:v('name'),category:CAT[v('category')]?v('category'):'gn',code:v('code').toUpperCase(),status:PSTATUS[v('status')]?v('status'):'active',priority:PRIO[v('priority')]?v('priority'):'mid',start:v('start'),end:v('end'),owner:v('owner'),folder:v('folder'),desc:v('desc'),progress:Math.max(0,Math.min(100,+v('progress')||0))};
+    data={name:v('name'),category:CAT[v('category')]?v('category'):'gn',code:v('code').toUpperCase(),status:PSTATUS[v('status')]?v('status'):'active',priority:PRIO[v('priority')]?v('priority'):'mid',start:v('start'),end:v('end'),owner:v('owner'),folder:v('folder'),url:v('url'),desc:v('desc'),progress:Math.max(0,Math.min(100,+v('progress')||0))};
     if(!data.code)data.code=nextCode(data.category);
     const dup=E(S.projects).find(([pid,p])=>pid!==M.id&&(p.code||'').toUpperCase()===data.code);
-    if(!data.name)err='請填寫專案名稱。';else if(data.start&&data.end&&data.end<data.start)err='截止日不能早於開始日。';else if(dup)err=`代碼 ${data.code} 已被「${dup[1].name}」使用，請換一個。`;
+    if(!data.name)err='請填寫專案名稱。';else if(data.start&&data.end&&data.end<data.start)err='截止日不能早於開始日。';else if(data.url&&!okUrl(data.url))err='系統網址要以 https:// 或 http:// 開頭。';else if(dup)err=`代碼 ${data.code} 已被「${dup[1].name}」使用，請換一個。`;
   }
   if(err){$('#ferr').textContent=err;return;}
   const nowIso=new Date().toISOString();
@@ -623,7 +697,7 @@ async function submitForm(form){
   if(prev&&prev.createdBy)data.createdBy=prev.createdBy;
   const id=M.id||uid(kind[0]);
   const ok=await put(coll,id,data);
-  if(ok){closeModal();toast(prev?'已儲存變更':(kind==='event'?'已新增行程':kind==='task'?'已新增任務':'已新增專案'));}
+  if(ok){closeModal();toast(prev?'已儲存變更':(kind==='event'?'已新增行程':kind==='task'?'已新增任務':kind==='link'?'已新增連結':'已新增專案'));}
 }
 async function deleteCurrent(){
   if(!M||!M.id)return;
@@ -687,11 +761,11 @@ function setStatus(id,status){
 }
 function toggleTask(id){const t=S.tasks[id];if(t)setStatus(id,t.status==='done'?'todo':'done');}
 function go(view){
-  if(!VIEWS.includes(view)||(view==='users'&&!isAdmin()))view='overview';
+  if(!VIEWS.includes(view)||(view==='users'&&!isAdmin()))view='portal';
   S.view=view;render();window.scrollTo(0,0);
   try{if(location.hash!=='#'+view)history.replaceState(null,'','#'+view);}catch(e){}
 }
-function readHash(){const h=(location.hash||'').slice(1);S.view=VIEWS.includes(h)?h:'overview';if(S.view==='users'&&AU&&AU.user()&&!isAdmin())S.view='overview';}
+function readHash(){const h=(location.hash||'').slice(1);S.view=VIEWS.includes(h)?h:'portal';if(S.view==='users'&&AU&&AU.user()&&!isAdmin())S.view='portal';}
 function calNav(dir){
   if(dir===0){S.calMonth=TODAY().slice(0,7);S.selDay=TODAY();}
   else{
@@ -714,14 +788,14 @@ function focusKey(el){if(!el||!el.dataset||!el.dataset.act)return null;const d=e
 function render(){
   document.body.classList.toggle('readonly',!S.canWrite);
   document.body.classList.toggle('is-admin',isAdmin());
-  if(S.view==='users'&&AU&&AU.user()&&!isAdmin())S.view='overview';
+  if(S.view==='users'&&AU&&AU.user()&&!isAdmin())S.view='portal';
   document.querySelectorAll('.tabs [data-act=nav]').forEach(b=>{if(b.dataset.view===S.view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
   document.querySelectorAll('[data-act=cat]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.cat===S.cat)));
   const main=$('#main');
   const fk=main.contains(document.activeElement)?focusKey(document.activeElement):null;
   const lw=main.querySelector('.lanes-wrap');const sl=lw?lw.scrollLeft:0;
   S.loaded=!!ST.status().loaded;
-  main.innerHTML=S.view==='users'?vUsers():!S.loaded?loadingHTML():({overview:vOverview,calendar:vCalendar,projects:vProjects,board:vBoard}[S.view]||vOverview)();
+  main.innerHTML=S.view==='users'?vUsers():!S.loaded?loadingHTML():({portal:vPortal,overview:vOverview,calendar:vCalendar,projects:vProjects,board:vBoard}[S.view]||vPortal)();
   const lw2=main.querySelector('.lanes-wrap');if(lw2)lw2.scrollLeft=sl;
   if(fk){for(const el of main.querySelectorAll('[data-act]'))if(focusKey(el)===fk){el.focus({preventScroll:true});break;}}
   renderSync();renderFoot();

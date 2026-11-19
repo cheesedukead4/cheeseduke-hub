@@ -6,6 +6,7 @@
  *      tasks           任務（所屬專案、狀態、到期日、負責人）
  *      events_YYYYMM   行事曆行程，依「日期」（date）的年月分檔，避免單一檔案越來越大、每次修改都要上傳全部歷史
  *      requests        給 Claude 的留言（所屬專案、內容、狀態、回覆）；Claude 透過雲端後端的 autoReply 回覆
+ *      links           入口頁的常用連結（名稱、網址、類別、說明）
  *  - 每類有雲端版本號；上傳時帶「我是根據哪一版改的」，有人搶先更新就先下載，以單筆（id）為單位三方合併後再上傳
  *  - 同一筆的同一個欄位被兩個人改成不同值時，以這台裝置的修改為準，並通知畫面提示
  *  - IndexedDB 名稱用 wi- 開頭，和同網域的其他網站（庫存效期 fe-、採購看板 pb-、檔期包材 cms-）不會互相影響
@@ -17,9 +18,9 @@
   var STORE = 'kv';
   var POLL_MS = 30000;
   var PUSH_DELAY_MS = 800;
-  var LABELS = { projects: '專案', tasks: '任務', events: '行程', requests: '給 Claude 的留言' };
+  var LABELS = { projects: '專案', tasks: '任務', events: '行程', requests: '給 Claude 的留言', links: '常用連結' };
   var MONTHLY = ['events'];   // 依日期年月分檔的種類（資料要有 date 欄位）
-  var KEY_RE = /^(projects|tasks|requests|events_\d{6})$/;
+  var KEY_RE = /^(projects|tasks|requests|links|events_\d{6})$/;
 
   var parts = Object.create(null);   // 類別 -> JSON 字串（目前本機值，陣列）
   var bases = Object.create(null);   // 類別 -> 上次與雲端一致時的 JSON 字串（僅本機有未上傳修改時保存）
