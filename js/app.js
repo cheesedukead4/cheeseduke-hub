@@ -234,6 +234,13 @@ function reqHTML([id,r],showTask){
   return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span>${tk}<span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div>${r.text?`<p class="rq-t">${esc(r.text)}</p>`:''}${imgsHTML(r.images)}${brief}${replies}${wait?`<p class="muted rq-wait">${wait}</p>`:''}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
 }
 
+/* ---------- Demo 做好、等你確認（留言狀態 review）：進度條亮紅色提醒 ---------- */
+const reviewReqs=list=>list.filter(x=>x[1].status==='review');
+const reviewOfTask=tid=>reviewReqs(taskReqs(tid));
+const reviewOfProject=pid=>reviewReqs(liveReqs(pid));
+const reviewLabel=list=>list.length&&list.every(x=>isVendorReq(x[1]))?`${list.length} 則已整理，待你確認`:`${list.length} 個 Demo 待你確認`;
+const alertPill=list=>list.length?`<span class="pill bad blink">${reviewLabel(list)}</span>`:'';
+
 /* ---------- 留言的圖片：選檔或貼上截圖 → 縮小 → 上傳（imgUp）→ 送出時寫進留言 ---------- */
 const PEND={},UPING={};   // 留言框 key（p:專案 id、t:任務 id、r:留言 id）→ 已上傳、還沒送出的圖片／上傳中張數
 const IMG_LIMIT=4;
@@ -330,15 +337,15 @@ function vPortal(){
   const ext=u=>`href="${esc(u)}" target="_blank" rel="noopener"`;
   const goLine=u=>`<span class="pt-go"><span class="pt-site">${esc(siteOf(u))}</span><span class="pt-arrow" aria-hidden="true">開啟 ↗</span></span>`;
   const pTiles=withUrl.map(([id,p])=>{
-    const c=catP(p),u=projUrl(p),n=liveReqs(id).filter(x=>x[1].status==='review').length,dl=descLine(p);
-    return `<article class="ptile c-${c}">
+    const c=catP(p),u=projUrl(p),n=reviewOfProject(id).length,dl=descLine(p);
+    return `<article class="ptile c-${c}${n?' has-alert':''}">
       <a class="pt-main" ${ext(u)} aria-label="在新分頁開啟 ${esc(p.code||'')} ${esc(p.name)}">
         <span class="pt-top">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${p.status!=='active'?statusPill(p):''}</span>
         <b class="pt-name">${esc(p.name)}</b>
         ${dl?`<span class="pt-desc">${esc(dl)}</span>`:''}
         ${goLine(u)}
       </a>
-      <div class="pt-foot"><button type="button" class="linkbtn" data-act="open-project" data-id="${esc(id)}">專案詳情</button>${n?`<span class="pill warn">${n} 則留言待你確認</span>`:''}</div>
+      <div class="pt-foot"><button type="button" class="linkbtn" data-act="open-project" data-id="${esc(id)}">專案詳情</button>${alertPill(reviewOfProject(id))}</div>
     </article>`;
   }).join('');
   const lTiles=links.map(([id,l])=>{
@@ -406,10 +413,10 @@ function projSort(a,b){
   return (a[1].end||'9999').localeCompare(b[1].end||'9999');
 }
 function projRow([id,p]){
-  const g=prog(id),c=catP(p);
-  return `<button type="button" class="prow" data-act="open-project" data-id="${esc(id)}">
-    <span class="prow-top">${codeTag(p)}<span class="prow-name">${esc(p.name)}</span>${smp(p)}</span>
-    ${barHTML(c,g.pct,g.tpos)}
+  const g=prog(id),c=catP(p),rv=reviewOfProject(id);
+  return `<button type="button" class="prow${rv.length?' has-alert':''}" data-act="open-project" data-id="${esc(id)}">
+    <span class="prow-top">${codeTag(p)}<span class="prow-name">${esc(p.name)}</span>${smp(p)}${alertPill(rv)}</span>
+    ${barHTML(rv.length?'alert':c,g.pct,g.tpos)}
     <span class="prow-meta"><span class="pct">${g.pct}%</span>${g.total?`<span class="muted">${g.done}/${g.total} 任務</span>`:''}<span class="pill ${g.health[0]}">${g.health[1]}</span><span class="end">${endLabel(p)}</span></span>
   </button>`;
 }
@@ -481,12 +488,12 @@ function vProjects(){
   const cnt=s=>all.filter(x=>x[1].status===s).length;
   const seg=`<div class="seg" role="group" aria-label="專案狀態">${[['all','全部',all.length],['active','進行中',cnt('active')],['plan','規劃中',cnt('plan')],['hold','暫停',cnt('hold')],['done','已完成',cnt('done')]].map(([k,l,n])=>`<button type="button" data-act="proj-status" data-status="${k}" aria-pressed="${st===k}">${l} ${n}</button>`).join('')}</div>`;
   const cards=list.map(([id,p])=>{
-    const g=prog(id),c=catP(p);
-    return `<article class="pcard c-${c}" data-act="open-project" data-id="${esc(id)}" role="button" tabindex="0" aria-label="${esc(p.code)} ${esc(p.name)}，完成 ${g.pct}%">
-      <div class="pc-top">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${smp(p)}${(n=>n?`<span class="pill warn">${n} 則留言待你確認</span>`:'')(liveReqs(id).filter(x=>x[1].status==='review').length)}${statusPill(p)}</div>
+    const g=prog(id),c=catP(p),rv=reviewOfProject(id);
+    return `<article class="pcard c-${c}${rv.length?' has-alert':''}" data-act="open-project" data-id="${esc(id)}" role="button" tabindex="0" aria-label="${esc(p.code)} ${esc(p.name)}，完成 ${g.pct}%${rv.length?'，'+reviewLabel(rv):''}">
+      <div class="pc-top">${codeTag(p)}<span class="tag c-${c}">${CAT[c]}</span>${smp(p)}${alertPill(rv)}${statusPill(p)}</div>
       <h3>${esc(p.name)}</h3>
       <p class="pc-meta">${p.owner?esc(p.owner)+' · ':''}${fmtD(p.start)} → ${fmtD(p.end)}${p.priority==='high'?' · 高優先':''}</p>
-      ${barHTML(c,g.pct,g.tpos)}
+      ${barHTML(rv.length?'alert':c,g.pct,g.tpos)}
       <div class="pc-foot"><span class="pct">${g.pct}%</span><span>${g.total?`${g.done}/${g.total} 任務完成`:'尚無任務'}</span><span class="pill ${g.health[0]}">${g.health[1]}</span><span class="end">${endLabel(p)}</span></div>
     </article>`;
   }).join('');
@@ -512,7 +519,7 @@ function vBoard(){
       return `<article class="tcard pr-${x.priority||'mid'}" data-act="edit" data-kind="task" data-id="${esc(id)}" draggable="${S.canWrite}" role="button" tabindex="0">
         <div class="tc-top">${codeTag(p)}${smp(x)}<span class="prio">優先 ${PRIO[x.priority]||'中'}</span></div>
         <p class="tc-title${st==='done'?' done-t':''}">${esc(x.title)}</p>
-        ${st!=='done'&&tpct(x)>0?`<div class="tc-prog">${miniBar(catT(x),tpct(x))}<em>${tpct(x)}%</em></div>`:''}
+        ${(rv=>(st!=='done'&&tpct(x)>0)||rv.length?`<div class="tc-prog${rv.length?' alert':''}">${miniBar(rv.length?'alert':catT(x),tpct(x))}<em>${tpct(x)}%</em></div>${rv.length?`<span class="pill bad blink">${reviewLabel(rv)}</span>`:''}`:'')(reviewOfTask(id))}
         <div class="tc-meta">${di?`<span class="due ${di[0]}">${di[1]}</span>`:''}${x.assignee?`<span>${esc(x.assignee)}</span>`:''}</div>
         <div class="tc-move w-only">${prev?`<button type="button" data-act="move" data-id="${esc(id)}" data-to="${prev[0]}" aria-label="移到${prev[1]}">‹ ${prev[1]}</button>`:''}${next?`<button type="button" class="nx" data-act="move" data-id="${esc(id)}" data-to="${next[0]}" aria-label="移到${next[1]}">${next[1]} ›</button>`:''}</div>
       </article>`;
@@ -658,10 +665,10 @@ function renderDrawer(){
       <div><dt>截止</dt><dd>${endLabel(p)}</dd></div>
     </dl>
     ${p.desc?`<p class="desc">${esc(p.desc)}</p>`:''}
-    <div class="d-prog">${barHTML(c,g.pct,g.tpos)}<div class="d-prog-meta"><span>整體進度 <b>${g.pct}%</b></span>${g.tpos!==null?`<span>時程已過 ${g.tpos}%</span>`:''}<span class="pill ${g.health[0]}">${g.health[1]}</span>${g.total?'<span>（各任務進度的平均）</span>':'<span>（沒有任務時，以專案設定的進度為準）</span>'}</div></div>
+    <div class="d-prog${reviewOfProject(id).length?' alert':''}">${barHTML(reviewOfProject(id).length?'alert':c,g.pct,g.tpos)}<div class="d-prog-meta"><span>整體進度 <b>${g.pct}%</b></span>${alertPill(reviewOfProject(id))}${g.tpos!==null?`<span>時程已過 ${g.tpos}%</span>`:''}<span class="pill ${g.health[0]}">${g.health[1]}</span>${g.total?'<span>（各任務進度的平均）</span>':'<span>（沒有任務時，以專案設定的進度為準）</span>'}</div></div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>任務<span>${g.done}/${g.total}</span></h3><button type="button" class="btn w-only" data-act="new" data-kind="task" data-project="${esc(id)}">＋ 任務</button></div>
-      ${ts.length?ts.map(([tid,x])=>{const di=dueInfo(x),tp=tpct(x);return `<div class="dtask">${ckBtn(tid,x)}<button type="button" class="amain" data-act="edit" data-kind="task" data-id="${esc(tid)}" aria-label="${esc(x.title)}，執行進度 ${tp}%，按一下修改"><b class="${x.status==='done'?'done-t':''}">${esc(x.title)} ${smp(x)}</b><small>${x.assignee?esc(x.assignee)+' · ':''}${di?`<span class="due ${di[0]}">${di[1]}</span>`:'未設到期日'}${(l=>l.length?` · <span class="${l.some(q=>q[1].status==='review')?'due warn':''}">留言 ${l.length}${l.some(q=>q[1].status==='review')?'（待你確認）':''}</span>`:'')(taskReqs(tid))}</small><span class="dt-prog">${miniBar(c,tp)}<em>${tp}%</em></span></button><span class="pill ${x.status==='done'?'ok':x.status==='review'?'warn':x.status==='doing'?'info':''}">${TLABEL[x.status]||'待辦'}</span></div>`;}).join(''):'<p class="muted">還沒有任務。把專案拆成幾個具體步驟，每個任務有自己的進度，專案進度會自動平均。</p>'}
+      ${ts.length?ts.map(([tid,x])=>{const di=dueInfo(x),tp=tpct(x);return `<div class="dtask">${ckBtn(tid,x)}<button type="button" class="amain" data-act="edit" data-kind="task" data-id="${esc(tid)}" aria-label="${esc(x.title)}，執行進度 ${tp}%，按一下修改"><b class="${x.status==='done'?'done-t':''}">${esc(x.title)} ${smp(x)}</b><small>${x.assignee?esc(x.assignee)+' · ':''}${di?`<span class="due ${di[0]}">${di[1]}</span>`:'未設到期日'}${(l=>l.length?` · 留言 ${l.length}`:'')(taskReqs(tid))}</small><span class="dt-prog${reviewOfTask(tid).length?' alert':''}">${miniBar(reviewOfTask(tid).length?'alert':c,tp)}<em>${tp}%</em>${alertPill(reviewOfTask(tid))}</span></button><span class="pill ${x.status==='done'?'ok':x.status==='review'?'warn':x.status==='doing'?'info':''}">${TLABEL[x.status]||'待辦'}</span></div>`;}).join(''):'<p class="muted">還沒有任務。把專案拆成幾個具體步驟，每個任務有自己的進度，專案進度會自動平均。</p>'}
     </div>
     <div class="d-sec">
       <div class="d-sec-h"><h3>接下來的行程</h3><button type="button" class="btn w-only" data-act="new" data-kind="event" data-project="${esc(id)}">＋ 行程</button></div>
@@ -981,7 +988,7 @@ function render(){
   main.innerHTML=S.view==='users'?vUsers():!S.loaded?loadingHTML():({portal:vPortal,overview:vOverview,calendar:vCalendar,projects:vProjects,board:vBoard}[S.view]||vPortal)();
   const lw2=main.querySelector('.lanes-wrap');if(lw2)lw2.scrollLeft=sl;
   if(fk){for(const el of main.querySelectorAll('[data-act]'))if(focusKey(el)===fk){el.focus({preventScroll:true});break;}}
-  renderSync();renderFoot();
+  renderSync();renderFoot();renderAlert();
   // 任務視窗開著時，留言有新回覆就更新（留言框不動，打到一半的字不會不見）
   if(M&&M.kind==='task'&&M.id){const l=$('#t-rq-list');if(l){l.innerHTML=taskReqList(M.id);loadImgs();}}
   vlRefresh();
@@ -997,6 +1004,13 @@ function renderSync(){
   const [cls,txt]=map[st.state]||['',st.state];
   el.className='sync '+cls;el.querySelector('span').textContent=txt;
   el.title=(st.detail?st.detail+'。':'')+(st.lastSync?'上次同步 '+new Date(st.lastSync).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})+'。':'')+'按一下立即同步';
+}
+// Demo 待你確認的數量：「專案」分頁的紅色數字、瀏覽器分頁標題（視窗在背景時也看得到）
+const BASE_TITLE=document.title;
+function renderAlert(){
+  const n=E(S.requests).filter(x=>x[1].status==='review').length,b=$('#nb-review');
+  if(b){b.textContent=n;b.hidden=!n;b.setAttribute('aria-label',`${n} 個待你確認`);}
+  document.title=n?`(${n}) 待你確認｜${BASE_TITLE}`:BASE_TITLE;
 }
 function renderFoot(){
   const n=c=>Object.keys(S[c]).length;
