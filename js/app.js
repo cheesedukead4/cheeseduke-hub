@@ -187,7 +187,17 @@ const siteOf=u=>{try{const x=new URL(u),path=x.pathname.replace(/\/$/,'');
 // 說明的第一行（跳過「App：」「資料夾：」這類設定行）
 const descLine=p=>{for(const l of String(p.desc||'').split('\n')){const t=l.trim();if(t&&!/^(App|資料夾|入口網址|網址)：/.test(t))return t;}return '';};
 const whenTxt=iso=>iso?new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
-const liveReqs=pid=>E(S.requests).filter(x=>x[1].projectId===pid&&x[1].status!=='closed').sort((a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||''));
+// 留言清單只顯示還沒完成的；已完成（已上線／已討論）預設收起來，按「顯示已完成的 N 則留言」才列出；已取消一律不顯示
+const byNewest=(a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||'');
+const liveReqs=pid=>E(S.requests).filter(x=>x[1].projectId===pid&&x[1].status!=='closed'&&x[1].status!=='done').sort(byNewest);
+const doneReqsOfProject=pid=>E(S.requests).filter(x=>x[1].projectId===pid&&x[1].status==='done').sort(byNewest);
+const doneReqsOfTask=tid=>E(S.requests).filter(x=>x[1].taskId===tid&&x[1].status==='done').sort(byNewest);
+const SHOW_DONE=new Set();   // 這次開著網站時，哪些留言區有打開「已完成」（p:專案 id、t:任務 id）
+function doneReqsHTML(key,list,showTask){
+  if(!list.length)return '';
+  const open=SHOW_DONE.has(key);
+  return `<button type="button" class="linkbtn rq-done-toggle" data-act="req-done-toggle" data-key="${esc(key)}" aria-expanded="${open}">${open?'收起已完成的留言':`顯示已完成的 ${list.length} 則留言`}</button>${open?`<div class="rq-done-list">${list.map(x=>reqHTML(x,showTask)).join('')}</div>`:''}`;
+}
 // 留言回覆的 demo 截圖：登入後向雲端讀（reqImg），讀過的留在記憶體
 const IMGS={},imgLoading=new Set();
 const imgTag=im=>`<button type="button" class="rq-img" data-act="req-img" data-id="${esc(im.id)}" aria-label="放大截圖 ${esc(im.name||'')}"><img data-img="${esc(im.id)}" alt="${esc(im.name||'demo 截圖')}"${IMGS[im.id]?` src="${IMGS[im.id]}"`:''}></button>`;
@@ -211,7 +221,7 @@ function openImg(id){
 }
 // 留言是針對哪個任務（任務被改名時用目前的名稱）
 const reqTask=r=>r.taskId?((S.tasks[r.taskId]||{}).title||r.taskTitle||'（任務已刪除）'):'';
-const taskReqs=tid=>E(S.requests).filter(x=>x[1].taskId===tid&&x[1].status!=='closed').sort((a,b)=>(b[1].createdAt||'').localeCompare(a[1].createdAt||''));
+const taskReqs=tid=>E(S.requests).filter(x=>x[1].taskId===tid&&x[1].status!=='closed'&&x[1].status!=='done').sort(byNewest);
 // 委外工程師負責的專案（vendor）：留言由 Claude 整理成「給工程師的討論重點」，不直接修改
 const VREQ={open:['待整理','info'],review:['已整理，待你確認','warn'],approved:['待跟工程師討論','ok'],done:['已討論','ok'],closed:['已取消','']};
 const isVendorReq=r=>!!(r.vendor||(P(r.projectId)||{}).vendor);
@@ -303,7 +313,7 @@ function takePend(k){
 }
 
 // 任務視窗下方：這個任務給 Claude 的留言
-const taskReqList=tid=>{const l=taskReqs(tid);return l.length?l.map(x=>reqHTML(x,false)).join(''):'<p class="muted" style="font-size:12.5px">這個任務還沒有留言。</p>';};
+const taskReqList=tid=>{const l=taskReqs(tid),d=doneReqsOfTask(tid);return (l.length?l.map(x=>reqHTML(x,false)).join(''):`<p class="muted" style="font-size:12.5px">${d.length?'這個任務沒有進行中的留言。':'這個任務還沒有留言。'}</p>`)+doneReqsHTML('t:'+tid,d,false);};
 const VENDOR_HINT='這個專案是委外工程師負責：Claude 會把留言和圖片整理成「給工程師的討論重點」（不會直接修改系統），你確認後列入「工程師討論清單」，可以列印或複製給工程師。';
 function taskReqSection(tid){
   const t=S.tasks[tid]||{},vend=!!(P(t.projectId)||{}).vendor;
@@ -680,6 +690,7 @@ function renderDrawer(){
       <div class="d-sec-h"><h3>${p.vendor?'跟委外工程師討論的事項':'給 Claude 的留言'}</h3>${p.vendor?`<button type="button" class="btn" data-act="vendor-list" data-id="${esc(id)}">工程師討論清單</button>`:''}</div>
       <p class="muted rq-hint">${p.vendor?VENDOR_HINT+'只針對某個任務（頁面）的話，點上面那個任務，在任務視窗下方留言。':'送出後會直接交給 Claude 處理，不用打開專案。Claude 收到後會在這裡回覆（電腦上的 Claude 要開著）；改好會先附 demo 截圖，你按「核准上線」才會上線。只針對某個任務的話，點上面那個任務，在任務視窗下方留言。'}</p>
       ${liveReqs(id).map(x=>reqHTML(x,true)).join('')}
+      ${doneReqsHTML('p:'+id,doneReqsOfProject(id),true)}
       ${composerHTML('p:'+id,'rq-text',p.vendor?'例如：整個入口網站的登入很慢（附截圖）':'例如：首頁的表格加一欄「負責人」',`<button type="button" class="btn primary" data-act="req-send" data-id="${esc(id)}">送出留言</button>`)}
     </div>
     ${p.updatedBy?`<p class="muted" style="font-size:12px">最後更新：${esc(p.updatedBy)}${p.updatedAt?' · '+esc(new Date(p.updatedAt).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})):''}</p>`:''}
@@ -1099,6 +1110,7 @@ document.addEventListener('click',e=>{
     case 'req-send-task':{const t=S.tasks[d.id];if(t)sendReq(t.projectId,d.id);else toast('這個任務已被刪除');break;}
     case 'req-approve':{const r=S.requests[d.id];setReq(d.id,{status:'approved'},r&&isVendorReq(r)?'已列入「工程師討論清單」':'已核准，Claude 會直接收到並上線');break;}
     case 'req-discussed':setReq(d.id,{status:'done'},'已標記為「已跟工程師討論」');break;
+    case 'req-done-toggle':if(SHOW_DONE.has(d.key))SHOW_DONE.delete(d.key);else SHOW_DONE.add(d.key);render();break;
     case 'vendor-list':openVendorList(d.id);break;
     case 'vl-filter':S.vlFilter=d.status;if(M&&M.kind==='vlist')vlRefresh();else render();break;
     case 'vl-copy':vlCopy();break;

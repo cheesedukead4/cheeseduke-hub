@@ -441,6 +441,10 @@ html.auth-locked .app{display:none}
 .rq-who{font-size:12px}
 .rq-a{display:flex;flex-wrap:wrap;gap:8px}
 .rq-new{display:grid;gap:8px}
+/* 已完成的留言：預設收起來 */
+.rq-done-toggle{border:0;background:transparent;color:var(--muted);text-decoration:underline;text-underline-offset:3px;padding:4px 0;font-size:12.5px;justify-self:start;text-align:left}
+.rq-done-toggle:hover{color:var(--fg)}
+.rq-done-list{display:grid;gap:8px;opacity:.85}
 .rq-task{font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:4px;background:var(--accent-soft);color:var(--fg)}
 /* 任務視窗下方的留言區 */
 .t-rq{display:grid;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
