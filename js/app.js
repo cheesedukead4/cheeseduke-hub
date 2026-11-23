@@ -1,14 +1,16 @@
 /*
  * 倉儲 IT 整合中心｜全部畫面
  * ---------------------------------------------------------------
- * 頁面：入口（首頁）、總覽、行事曆、專案、進度看板、工程師討論（有委外專案才顯示）、管理（人員與權限、備份，只有管理員）。
- *       網址 #portal #overview #calendar #projects #board #vendor #users。
+ * 頁面：入口（首頁）、總覽、行事曆、專案、進度看板、工程師討論（有委外專案才顯示）、操作指南、管理（人員與權限、備份，只有管理員）。
+ *       網址 #portal #overview #calendar #projects #board #vendor #guide #users。
  * 資料（WIStore，見 cloud-store.js），每一筆都有 id：
  *   projects  { id, code, name, category: wh|it|gn, status: plan|active|hold|done, priority: high|mid|low,
  *               start, end (YYYY-MM-DD), owner, folder, url (系統網址，入口頁用), desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
  *             沒填 url 時，用說明裡的「App：網址」或「入口網址：網址」。
  *             vendor＝委外工程師負責：留言由 Claude 整理成給工程師的討論重點（brief），不直接修改；有「工程師討論清單」可列印／複製。
  *   links     入口頁的常用連結（不是專案的系統，例如夥伴交接看板）{ id, title, url, category: wh|it|gn, note }
+ *   guides    「操作指南」頁的各系統操作說明書，一章一筆 { id, order, title, md (Markdown), docTitle, importedAt, importedBy }
+ *             管理員按「匯入說明書」，選從 Claude 文件匯出的 Markdown（每個「## 標題」是一章），整份取代。存在雲端，登入才看得到。
  *   tasks     { id, title, projectId, status: todo|doing|review|done, priority, due, assignee, note, progress (0-100，任務自己的執行進度), doneAt, ... }
  *   events    { id, title, type: inbound|outbound|inventory|it|meeting|other, date, start, end (HH:MM), projectId, location, note, ... }
  *   requests  給 Claude 的留言 { id, projectId, taskId?, taskTitle?, text, status: open|review|approved|done|closed, replies: [{ id, by, text, at }], createdAt, createdBy }
@@ -25,7 +27,7 @@
 
 /* ================= constants ================= */
 const WD=['日','一','二','三','四','五','六'];
-const VIEWS=['portal','overview','calendar','projects','board','vendor','users'];
+const VIEWS=['portal','overview','calendar','projects','board','vendor','guide','users'];
 const COLL={event:'events',task:'tasks',project:'projects',link:'links'};
 const CAT={wh:'倉儲',it:'IT',gn:'綜合'};
 const PSTATUS={plan:['規劃中',''],active:['進行中','info'],hold:['暫停','warn'],done:['已完成','ok']};
@@ -66,7 +68,8 @@ const myName=()=>(AU&&AU.name())||'';
 
 /* ================= state ================= */
 const S={
-  projects:{},tasks:{},events:{},requests:{},links:{},
+  projects:{},tasks:{},events:{},requests:{},links:{},guides:{},
+  guideCh:'',guideQ:'',guideLastQ:'',
   view:'portal',cat:'all',
   calMonth:TODAY().slice(0,7),selDay:TODAY(),
   boardProject:'all',projStatus:'all',showAllDone:false,vlFilter:'open',
@@ -75,6 +78,8 @@ const S={
 Object.defineProperty(S,'canWrite',{get:canEdit});
 try{const p=JSON.parse(localStorage.getItem(LS_PREF)||'{}');if(['all','wh','it'].includes(p.cat))S.cat=p.cat;}catch(e){}
 const savePref=()=>{try{localStorage.setItem(LS_PREF,JSON.stringify({cat:S.cat}));}catch(e){}};
+const LS_GUIDE='wi_guide_ch';   // 操作指南上次看的章（只記在這台裝置）
+try{S.guideCh=localStorage.getItem(LS_GUIDE)||'';}catch(e){}
 
 const P=id=>id?S.projects[id]:null;
 const catP=p=>p&&CAT[p.category]?p.category:'gn';
@@ -84,7 +89,7 @@ const inCat=c=>S.cat==='all'||S.cat===c;
 
 function pullFromStore(){
   const m=kind=>{const o={};for(const r of ST.list(kind))if(r&&r.id!=null)o[r.id]=r;return o;};
-  S.projects=m('projects');S.tasks=m('tasks');S.events=m('events');S.requests=m('requests');S.links=m('links');
+  S.projects=m('projects');S.tasks=m('tasks');S.events=m('events');S.requests=m('requests');S.links=m('links');S.guides=m('guides');
 }
 async function put(coll,id,data){
   if(!canEdit()){toast('你目前只有檢視權限，無法修改資料');return false;}
@@ -346,6 +351,7 @@ function vPortal(){
   const lcat=l=>CAT[l.category]?l.category:'gn';
   const links=E(S.links).filter(x=>okUrl(x[1].url)&&inCat(lcat(x[1]))).sort((a,b)=>(a[1].title||'').localeCompare(b[1].title||'','zh-Hant'));
   const ext=u=>`href="${esc(u)}" target="_blank" rel="noopener"`;
+  const gBtn=name=>{const g=guideFor(name);return g?`<button type="button" class="linkbtn" data-act="g-open" data-id="${esc(g.id)}">操作說明</button>`:'';};
   const goLine=u=>`<span class="pt-go"><span class="pt-site">${esc(siteOf(u))}</span><span class="pt-arrow" aria-hidden="true">開啟 ↗</span></span>`;
   const pTiles=withUrl.map(([id,p])=>{
     const c=catP(p),u=projUrl(p),n=reviewOfProject(id).length,dl=descLine(p);
@@ -356,7 +362,7 @@ function vPortal(){
         ${dl?`<span class="pt-desc">${esc(dl)}</span>`:''}
         ${goLine(u)}
       </a>
-      <div class="pt-foot"><button type="button" class="linkbtn" data-act="open-project" data-id="${esc(id)}">專案詳情</button>${alertPill(reviewOfProject(id))}</div>
+      <div class="pt-foot"><button type="button" class="linkbtn" data-act="open-project" data-id="${esc(id)}">專案詳情</button>${gBtn(p.name)}${alertPill(reviewOfProject(id))}</div>
     </article>`;
   }).join('');
   const lTiles=links.map(([id,l])=>{
@@ -368,7 +374,7 @@ function vPortal(){
         ${l.note?`<span class="pt-desc">${esc(l.note)}</span>`:''}
         ${goLine(l.url)}
       </a>
-      <div class="pt-foot w-only"><button type="button" class="linkbtn" data-act="edit" data-kind="link" data-id="${esc(id)}">編輯連結</button></div>
+      <div class="pt-foot${gBtn(l.title)?'':' w-only'}">${gBtn(l.title)}<button type="button" class="linkbtn w-only" data-act="edit" data-kind="link" data-id="${esc(id)}">編輯連結</button></div>
     </article>`;
   }).join('');
   const sec=(t,sub,body)=>`<section class="psec" aria-label="${t}"><div class="psec-h"><h2>${t}</h2>${sub?`<span class="muted">${sub}</span>`:''}</div>${body}</section>`;
@@ -621,7 +627,7 @@ function downloadFile(filename,content,mime){
 }
 function exportBackup(){
   const strip=kind=>ST.list(kind).map(r=>JSON.parse(JSON.stringify(r)));
-  downloadFile(`倉儲IT整合中心_備份_${TODAY()}.json`,JSON.stringify({app:BACKUP_APP,version:1,exportedAt:new Date().toISOString(),exportedBy:myName(),projects:strip('projects'),tasks:strip('tasks'),events:strip('events'),links:strip('links'),requests:strip('requests')},null,2),'application/json;charset=utf-8');
+  downloadFile(`倉儲IT整合中心_備份_${TODAY()}.json`,JSON.stringify({app:BACKUP_APP,version:1,exportedAt:new Date().toISOString(),exportedBy:myName(),projects:strip('projects'),tasks:strip('tasks'),events:strip('events'),links:strip('links'),requests:strip('requests'),guides:strip('guides')},null,2),'application/json;charset=utf-8');
 }
 let pendingImport=null;
 function readImport(file){
@@ -633,6 +639,7 @@ function readImport(file){
     if(o.events.some(e=>!pd(e.date))){toast('備份裡有行程缺少日期，無法匯入。');return;}
     if(o.links!=null&&!okArr(o.links)){toast('備份裡的常用連結格式不對，無法匯入。');return;}
     if(o.requests!=null&&!okArr(o.requests)){toast('備份裡的留言格式不對，無法匯入。');return;}
+    if(o.guides!=null&&!okArr(o.guides)){toast('備份裡的操作指南格式不對，無法匯入。');return;}
     pendingImport=o;
     M={kind:'import',id:null,opener:document.activeElement};
     $('#sheet').innerHTML=`<form id="m-form" novalidate>
@@ -651,7 +658,7 @@ function readImport(file){
 function doImport(){
   const o=pendingImport;pendingImport=null;if(!o)return;
   // 舊的備份沒有常用連結：保留目前的連結，不清掉
-  const kinds={projects:o.projects,tasks:o.tasks,events:o.events};if(o.links)kinds.links=o.links;if(o.requests)kinds.requests=o.requests;
+  const kinds={projects:o.projects,tasks:o.tasks,events:o.events};if(o.links)kinds.links=o.links;if(o.requests)kinds.requests=o.requests;if(o.guides)kinds.guides=o.guides;
   try{ST.replaceKinds(kinds);closeModal();S.openProject=null;toast(`已匯入 ${o.projects.length} 個專案、${o.tasks.length} 筆任務、${o.events.length} 個行程`);}
   catch(e){$('#ferr').textContent='匯入失敗：'+e.message;}
 }
@@ -793,6 +800,7 @@ async function submitForm(form){
   if(M.kind==='user')return submitUser(form);
   if(M.kind==='import')return doImport();
   if(M.kind==='reqrevise')return submitRevise(form);
+  if(M.kind==='guide')return doGuideImport();
   if(!S.canWrite)return;
   const f=new FormData(form);const v=k=>String(f.get(k)||'').trim();
   const kind=M.kind,coll=COLL[kind],prev=M.id?S[coll][M.id]:null;
@@ -996,6 +1004,219 @@ function setStatus(id,status){
   put('tasks',id,n);
 }
 function toggleTask(id){const t=S.tasks[id];if(t)setStatus(id,t.status==='done'?'todo':'done');}
+/* ================= 操作指南（各系統操作說明書，存在雲端 guides，一章一筆） ================= */
+// 管理員按「匯入說明書」：選從 Claude 文件匯出的 Markdown（.md）或直接貼上，每個「## 標題」是一章，整份取代。
+// Markdown 只支援說明書用到的格式：### / #### 小標、段落、1. 編號清單、- 項目清單、表格、**粗體**、`程式字`、網址自動變連結。
+const guideList=()=>Object.values(S.guides).filter(g=>g&&g.title).sort((a,b)=>(a.order||0)-(b.order||0));
+function curGuide(list){list=list||guideList();return list.find(g=>g.id===S.guideCh)||list[0]||null;}
+function setGuideCh(id){S.guideCh=id;try{localStorage.setItem(LS_GUIDE,id);}catch(e){}}
+// 章的 id 用標題算（重新匯入後，書籤和入口頁的「操作說明」連結還是對得到）
+function guideId(title,used){let h=5381;for(const c of title)h=((h*33)^c.codePointAt(0))>>>0;let id='gd'+h.toString(36),n=2;while(used.has(id))id='gd'+h.toString(36)+'-'+(n++);used.add(id);return id;}
+function parseGuideMd(text){
+  const lines=String(text||'').replace(/^﻿/,'').replace(/\r\n?/g,'\n').split('\n');
+  let docTitle='',cur=null;const chs=[];
+  for(const ln of lines){
+    const h2=/^##\s+(.+?)\s*#*\s*$/.exec(ln);
+    if(h2){cur={title:h2[1].trim(),lines:[]};chs.push(cur);continue;}
+    const h1=/^#\s+(.+?)\s*#*\s*$/.exec(ln);
+    if(h1&&!cur){docTitle=h1[1].trim();continue;}
+    if(cur)cur.lines.push(ln);
+  }
+  return {docTitle,chapters:chs.map(c=>({title:c.title,md:c.lines.join('\n').trim()})).filter(c=>c.title)};
+}
+const MD_ESC=/\\([!-\/:-@\[-`{-~])/g;
+function mdInline(s){
+  let t=esc(s);const codes=[];
+  t=t.replace(/`([^`]+)`/g,(m,c)=>{codes.push(c);return '\u0000'+(codes.length-1)+'\u0000';});
+  t=t.replace(MD_ESC,'$1');
+  t=t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  t=t.replace(/https?:\/\/[^\s<>"）」，。、；]+/g,u=>{const tail=(/[.,;:!?)]+$/.exec(u)||[''])[0],url=tail?u.slice(0,-tail.length):u;return `<a href="${url}" target="_blank" rel="noopener">${url}</a>${tail}`;});
+  return t.replace(/\u0000(\d+)\u0000/g,(m,i)=>`<code>${codes[+i]}</code>`);
+}
+const MD_CACHE=new Map();
+function mdBlocks(md,pre){
+  const key=pre+'\n'+md;if(MD_CACHE.has(key))return MD_CACHE.get(key);
+  const L=String(md||'').split('\n'),isRow=l=>/^\s*\|/.test(l),isSep=l=>/^\s*\|?\s*:?-{3,}/.test(l);
+  const cells=l=>{let x=l.trim().replace(/\\\|/g,'\u0001');if(x.startsWith('|'))x=x.slice(1);if(x.endsWith('|'))x=x.slice(0,-1);return x.split('|').map(c=>c.replace(/\u0001/g,'|').trim());};
+  const OL=/^\d+[.)]\s+/,UL=/^[-*+]\s+/,HD=/^(#{2,6})\s+(.+?)\s*#*\s*$/;
+  let i=0,h='',sec=0;
+  while(i<L.length){
+    const l=L[i];let m;
+    if(!l.trim()){i++;continue;}
+    if((m=HD.exec(l))){sec++;const lv=m[1].length<=3?3:4;h+=`<h${lv} id="gs-${pre}-${sec}" tabindex="-1">${mdInline(m[2])}</h${lv}>`;i++;continue;}
+    if(isRow(l)&&i+1<L.length&&isSep(L[i+1])){
+      const head=cells(l),rows=[];i+=2;
+      while(i<L.length&&isRow(L[i])){rows.push(cells(L[i]));i++;}
+      h+=`<div class="gd-tbl" role="region" aria-label="表格" tabindex="0"><table><thead><tr>${head.map(c=>`<th scope="col">${mdInline(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${mdInline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+      continue;
+    }
+    if(OL.test(l)||UL.test(l)){
+      const ord=OL.test(l),re=ord?OL:UL,start=ord?parseInt(l,10):1,items=[];
+      while(i<L.length&&re.test(L[i])){items.push(L[i].replace(re,''));i++;while(i<L.length&&/^\s{2,}\S/.test(L[i])&&!OL.test(L[i].trim())&&!UL.test(L[i].trim())){items[items.length-1]+=' '+L[i].trim();i++;}}
+      const tag=ord?'ol':'ul';
+      h+=`<${tag}${ord&&start>1?` start="${start}"`:''}>${items.map(x=>`<li>${mdInline(x)}</li>`).join('')}</${tag}>`;
+      continue;
+    }
+    const buf=[];
+    while(i<L.length&&L[i].trim()&&!HD.test(L[i])&&!OL.test(L[i])&&!UL.test(L[i])&&!(isRow(L[i])&&i+1<L.length&&isSep(L[i+1]))){buf.push(L[i].trim());i++;}
+    if(!buf.length){buf.push(l.trim());i++;}
+    const txt=buf.join(' ');
+    const cls=/^注意[：:]/.test(txt)?' class="gd-note"':/^\*\*[^*]+\*\*$/.test(txt)?' class="gd-sub"':'';
+    h+=`<p${cls}>${mdInline(txt)}</p>`;
+  }
+  if(MD_CACHE.size>60)MD_CACHE.clear();
+  MD_CACHE.set(key,h);return h;
+}
+// 搜尋：以「小標」為單位；第 0 段是章首（第一個小標之前）
+const plainMd=s=>String(s).replace(/^\s*(\d+[.)]|[-*+])\s+/,'').replace(/^\s*\|?\s*:?-{3,}.*$/,'').replace(/\|/g,' ').replace(/\*\*|`/g,'').replace(MD_ESC,'$1').trim();
+const SEC_CACHE=new Map();
+function guideSections(g){
+  const key=g.id+'\n'+g.md;if(SEC_CACHE.has(key))return SEC_CACHE.get(key);
+  const out=[{n:0,title:'',text:''}];let sec=0;
+  for(const l of String(g.md||'').split('\n')){
+    const m=/^#{2,6}\s+(.+?)\s*#*\s*$/.exec(l);
+    if(m){sec++;out.push({n:sec,title:plainMd(m[1]),text:''});continue;}
+    const t=plainMd(l);if(t)out[out.length-1].text+=t+'\n';
+  }
+  if(SEC_CACHE.size>60)SEC_CACHE.clear();
+  SEC_CACHE.set(key,out);return out;
+}
+function guideSearch(terms){
+  const res=[];
+  for(const g of guideList()){
+    const gt=g.title.toLowerCase();
+    for(const s of guideSections(g)){
+      if(!s.n&&!s.text)continue;
+      const own=(s.title+'\n'+s.text).toLowerCase();
+      // 每個關鍵字要出現在章名或這一段；只靠章名對到的不算（不然整章每一段都會列出來）
+      if(terms.every(t=>own.includes(t)||gt.includes(t))&&terms.some(t=>own.includes(t)))res.push({g,s});
+    }
+  }
+  return res;
+}
+function hl(text,terms){
+  if(!terms.length)return esc(text);
+  const re=new RegExp('('+terms.map(t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')','gi');
+  return String(text).split(re).map((p,i)=>i%2?`<mark>${esc(p)}</mark>`:esc(p)).join('');
+}
+function snippet(s,terms){
+  const t=s.text.replace(/\s+/g,' ').trim();if(!t)return '';
+  const low=t.toLowerCase();let at=-1;
+  for(const x of terms){const k=low.indexOf(x);if(k>=0&&(at<0||k<at))at=k;}
+  if(at<0)at=0;const a=Math.max(0,at-30),b=Math.min(t.length,at+80);
+  return (a>0?'…':'')+hl(t.slice(a,b),terms)+(b<t.length?'…':'');
+}
+function guideResultsHTML(q){
+  const terms=q.toLowerCase().split(/\s+/).filter(Boolean),res=guideSearch(terms);
+  if(!res.length)return `<section class="panel"><p class="empty">找不到「${esc(q)}」。換個說法試試，例如按鈕上的字或系統名稱。</p></section>`;
+  const shown=res.slice(0,60);
+  return `<section class="panel gd-res" aria-label="搜尋結果"><div class="ph"><h3>找到 ${res.length} 處${res.length>shown.length?`（列出前 ${shown.length} 處）`:''}</h3><button type="button" class="linkbtn" data-act="g-clear">清除搜尋</button></div>
+    <ul>${shown.map(({g,s})=>`<li><button type="button" class="gd-hit" data-act="g-goto" data-id="${esc(g.id)}" data-sec="${s.n}"><span class="gd-hit-t">${hl(g.title,terms)}${s.n?` <span class="gd-hit-sep" aria-hidden="true">›</span> ${hl(s.title,terms)}`:''}</span>${s.text?`<span class="gd-hit-s">${snippet(s,terms)}</span>`:''}</button></li>`).join('')}</ul></section>`;
+}
+function guideChapterHTML(g,list){
+  const i=list?list.findIndex(x=>x.id===g.id):-1,prev=i>0?list[i-1]:null,next=i>=0&&i<list.length-1?list[i+1]:null;
+  const back=list&&S.guideLastQ?`<button type="button" class="linkbtn gd-back no-print" data-act="g-back">← 回到「${esc(S.guideLastQ)}」的搜尋結果</button>`:'';
+  const pn=list?`<nav class="gd-pn no-print" aria-label="上一章、下一章">${prev?`<button type="button" class="btn ghost" data-act="g-ch" data-id="${esc(prev.id)}"><span aria-hidden="true">←</span> 上一章：${esc(prev.title)}</button>`:'<span></span>'}${next?`<button type="button" class="btn ghost" data-act="g-ch" data-id="${esc(next.id)}">下一章：${esc(next.title)} <span aria-hidden="true">→</span></button>`:''}</nav>`:'';
+  return `<article class="panel gd-doc">${back}<h2 class="gd-h" tabindex="-1">${esc(g.title)}</h2><div class="gd-md">${mdBlocks(g.md,(list?'':'p-')+g.id)}</div>${pn}</article>`;
+}
+function vGuide(){
+  const list=guideList(),g=curGuide(list),q=S.guideQ.trim();
+  const upd=list.reduce((m,x)=>x.importedAt&&x.importedAt>m?x.importedAt:m,'');
+  const docTitle=(list[0]&&list[0].docTitle)||'各系統操作說明書';
+  const tools=`<div class="vtools no-print">
+    ${list.length?`<input type="search" class="gd-q" id="g-q" data-act="g-q" placeholder="搜尋功能、按鈕名稱…" aria-label="搜尋操作指南" value="${esc(S.guideQ)}" autocomplete="off">
+    <button type="button" class="btn" data-act="g-print" data-all="0">列印這一章</button><button type="button" class="btn" data-act="g-print" data-all="1">列印整本</button>`:''}
+    ${isAdmin()?`<button type="button" class="btn${list.length?'':' primary'}" data-act="g-import">${list.length?'更新說明書':'匯入說明書'}</button>`:''}</div>`;
+  const head=`<section class="vhead"><div><p class="eyebrow">操作指南</p><h1>${esc(docTitle)}${list.length?`<small>${list.length} 章${upd?'・'+esc(new Date(upd).toLocaleDateString('zh-TW'))+' 更新':''}</small>`:''}</h1></div>${tools}</section>`;
+  if(!list.length)return head+statusBanner()+`<section class="panel"><p class="empty">還沒有匯入操作說明書。${isAdmin()?'按右上角「匯入說明書」，選擇從 Claude 文件匯出的 Markdown 檔（.md），或直接貼上內容。':'請管理員匯入。'}</p></section>`;
+  const toc=`<nav class="panel gd-toc no-print" aria-label="章節"><ol>${list.map((x,i)=>`<li><button type="button" data-act="g-ch" data-id="${esc(x.id)}"${!q&&x.id===g.id?' aria-current="true"':''}><span class="gd-n">${i+1}</span><span>${esc(x.title)}</span></button></li>`).join('')}</ol></nav>`;
+  const sel=`<label class="gd-sel no-print"><span>章節</span><select class="sel" id="g-sel">${list.map((x,i)=>`<option value="${esc(x.id)}"${x.id===g.id?' selected':''}>${i+1}. ${esc(x.title)}</option>`).join('')}</select></label>`;
+  return head+statusBanner()+`<div class="gd">${toc}<div class="gd-main">${sel}<div id="gd-body">${q?guideResultsHTML(q):guideChapterHTML(g,list)}</div></div></div><div class="gd-print-all"></div>`;
+}
+// 打字搜尋時只換內容區，搜尋框不重畫（游標不會跳）
+function refreshGuideBody(){
+  const b=$('#gd-body');if(!b)return;
+  const list=guideList(),q=S.guideQ.trim(),g=curGuide(list);
+  b.innerHTML=q?guideResultsHTML(q):g?guideChapterHTML(g,list):'';
+  document.querySelectorAll('.gd-toc [data-act=g-ch]').forEach(x=>{if(!q&&g&&x.dataset.id===g.id)x.setAttribute('aria-current','true');else x.removeAttribute('aria-current');});
+}
+function scrollToEl(el){const top=$('.top'),off=(top?top.getBoundingClientRect().height:0)+12;window.scrollTo({top:Math.max(0,el.getBoundingClientRect().top+window.scrollY-off)});}
+function openGuideCh(id,sec){
+  if(!S.guides[id])return;
+  setGuideCh(id);S.guideQ='';
+  const fromToc=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('.gd-toc,.gd-sel');
+  if(S.view!=='guide'){S.view='guide';try{history.replaceState(null,'','#guide');}catch(e){}}
+  render();
+  const el=sec?document.getElementById(`gs-${id}-${sec}`):$('.gd-doc');
+  if(el){scrollToEl(el);if(sec){el.classList.add('gd-flash');setTimeout(()=>el.classList.remove('gd-flash'),1800);}}
+  if(!fromToc){const f=sec?el:$('.gd-h');if(f)f.focus({preventScroll:true});}
+}
+function printGuide(all){
+  if(!all&&S.guideQ.trim()){S.guideQ='';render();}
+  document.body.classList.add('print-guide');document.body.classList.toggle('print-guide-all',all);
+  const b=$('.gd-print-all');if(b)b.innerHTML=all?guideList().map(x=>guideChapterHTML(x,null)).join(''):'';
+  setTimeout(()=>window.print(),60);
+}
+// 入口頁卡片的「操作說明」：用系統名稱對到章名（去掉空白、括號、App／系統／管理等字）
+const gnorm=s=>String(s||'').replace(/（[^）]*）|\([^)]*\)/g,'').replace(/\s+/g,'').replace(/app|系統|管理|網頁版/gi,'').toLowerCase();
+function guideFor(name){
+  const n=gnorm(name);if(n.length<2)return null;
+  for(const g of guideList()){
+    const alt=/（([^）]+)）/.exec(g.title);
+    for(const x of [g.title].concat(alt?[alt[1]]:[])){
+      const m=gnorm(x);
+      if(m.length>=2&&(m===n||(m.length>=4&&n.includes(m))||(n.length>=4&&m.includes(n))))return g;
+    }
+  }
+  return null;
+}
+function openGuideImport(){
+  if(!isAdmin())return;
+  M={kind:'guide',id:null,opener:document.activeElement};
+  const has=guideList().length;
+  $('#sheet').classList.add('wide');
+  $('#sheet').innerHTML=`<form id="m-form" novalidate>
+    <h2 id="m-title">${has?'更新操作說明書':'匯入操作說明書'}</h2>
+    <p>在 Claude 文件「起士公爵 各系統操作說明書」匯出 Markdown（.md），再按「選擇 .md 檔」；也可以把內容直接貼在下面。每個「## 標題」會變成一章。</p>
+    <div class="fgrid">
+      <div class="full gd-imp-row"><button type="button" class="btn" data-act="g-file">選擇 .md 檔</button><span class="muted" id="g-fname">還沒選檔案</span></div>
+      <label class="full">說明書內容（Markdown）<textarea name="md" id="f-gmd" rows="12" spellcheck="false" placeholder="# 起士公爵 各系統操作說明書&#10;&#10;## 共通操作&#10;…"></textarea></label>
+    </div>
+    <p class="muted gd-prev" id="g-prev" aria-live="polite">偵測到 0 章</p>
+    <p class="muted">${has?`會取代目前的 ${has} 章。`:''}所有登入整合中心的人都看得到；內容存在整合中心的雲端資料，不會放到公開網站。</p>
+    <p class="ferr" id="ferr" role="alert"></p>
+    <div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">取消</button><button type="submit" class="btn primary" id="f-save">${has?'更新並取代':'匯入'}</button></div>
+  </form>`;
+  $('#modal').hidden=false;lockScroll();
+  setTimeout(()=>{const b=$('#sheet [data-act=g-file]');if(b)b.focus();},0);
+}
+function readGuideFile(f){
+  if(f.size>3000000){toast('檔案太大（3MB 以內）。');return;}
+  const r=new FileReader();
+  r.onload=()=>{const ta=$('#f-gmd');if(ta){ta.value=String(r.result||'');guidePreview();}const n=$('#g-fname');if(n)n.textContent=f.name;};
+  r.onerror=()=>toast('讀不到這個檔案。');
+  r.readAsText(f,'utf-8');
+}
+function guidePreview(){
+  const ta=$('#f-gmd'),p=$('#g-prev');if(!ta||!p)return;
+  const r=parseGuideMd(ta.value);
+  p.textContent=r.chapters.length?`偵測到 ${r.chapters.length} 章：${r.chapters.map(c=>c.title).join('、')}`:'偵測到 0 章（每章要用「## 標題」開頭）';
+}
+function doGuideImport(){
+  if(!isAdmin())return;
+  const r=parseGuideMd(($('#f-gmd')||{}).value);
+  if(!r.chapters.length){$('#ferr').textContent='找不到「## 標題」，沒辦法分章。請確認貼上的是 Markdown。';return;}
+  const at=new Date().toISOString(),by=myName(),used=new Set();
+  const recs=r.chapters.map((c,i)=>({id:guideId(c.title,used),order:i+1,title:c.title,md:c.md,docTitle:r.docTitle,importedAt:at,importedBy:by,updatedBy:by}));
+  try{
+    ST.replaceKinds({guides:recs});
+    if(!recs.some(x=>x.id===S.guideCh))setGuideCh(recs[0].id);
+    S.guideQ='';S.guideLastQ='';closeModal();
+    toast(`已匯入 ${recs.length} 章操作指南`);
+    if(S.view!=='guide')go('guide');
+  }catch(e){$('#ferr').textContent='匯入失敗：'+e.message;}
+}
+
 function go(view){
   if(!VIEWS.includes(view)||(view==='users'&&!isAdmin()))view='portal';
   S.view=view;render();window.scrollTo(0,0);
@@ -1031,10 +1252,11 @@ function render(){
   const fk=main.contains(document.activeElement)?focusKey(document.activeElement):null;
   const lw=main.querySelector('.lanes-wrap');const sl=lw?lw.scrollLeft:0;
   S.loaded=!!ST.status().loaded;
-  main.innerHTML=S.view==='users'?vUsers():!S.loaded?loadingHTML():({portal:vPortal,overview:vOverview,calendar:vCalendar,projects:vProjects,board:vBoard,vendor:vVendor}[S.view]||vPortal)();
+  main.innerHTML=S.view==='users'?vUsers():!S.loaded?loadingHTML():({portal:vPortal,overview:vOverview,calendar:vCalendar,projects:vProjects,board:vBoard,vendor:vVendor,guide:vGuide}[S.view]||vPortal)();
   document.body.classList.toggle('print-view',S.view==='vendor');
   const lw2=main.querySelector('.lanes-wrap');if(lw2)lw2.scrollLeft=sl;
-  if(fk){for(const el of main.querySelectorAll('[data-act]'))if(focusKey(el)===fk){el.focus({preventScroll:true});break;}}
+  if(fk){for(const el of main.querySelectorAll('[data-act]'))if(focusKey(el)===fk){el.focus({preventScroll:true});if(el.id==='g-q'){const n=el.value.length;try{el.setSelectionRange(n,n);}catch(e){}}break;}}
+  const top=$('.top');if(top)document.documentElement.style.setProperty('--top-h',top.offsetHeight+'px');
   renderSync();renderFoot();renderAlert();
   // 任務視窗開著時，留言有新回覆就更新（留言框不動，打到一半的字不會不見）
   if(M&&M.kind==='task'&&M.id){const l=$('#t-rq-list');if(l){l.innerHTML=taskReqList(M.id);loadImgs();}}
@@ -1121,11 +1343,21 @@ document.addEventListener('click',e=>{
     case 'req-revise':openRevise(d.id);break;
     case 'req-img':openImg(d.id);break;
     case 'import':{const f=$('#importFile');f.value='';f.click();break;}
+    case 'g-ch':S.guideLastQ='';openGuideCh(d.id);break;
+    case 'g-open':S.guideLastQ='';openGuideCh(d.id);break;
+    case 'g-goto':S.guideLastQ=S.guideQ.trim();openGuideCh(d.id,+d.sec||0);break;
+    case 'g-back':S.guideQ=S.guideLastQ;S.guideLastQ='';render();setTimeout(()=>{const q=$('#g-q');if(q){q.focus();const n=q.value.length;try{q.setSelectionRange(n,n);}catch(e){}}},0);break;
+    case 'g-clear':S.guideQ='';S.guideLastQ='';render();setTimeout(()=>{const q=$('#g-q');if(q)q.focus();},0);break;
+    case 'g-import':openGuideImport();break;
+    case 'g-file':{const f=$('#guideFile');f.value='';f.click();break;}
+    case 'g-print':printGuide(d.all==='1');break;
   }
 });
 $('#sync').addEventListener('click',()=>ST.syncNow());
 $('#importFile').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f)readImport(f);});
 $('#imgFile').addEventListener('change',e=>{const k=e.target.dataset.key;if(k)addImages(k,e.target.files);});
+$('#guideFile').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f)readGuideFile(f);});
+window.addEventListener('afterprint',()=>{document.body.classList.remove('print-guide','print-guide-all');const b=$('.gd-print-all');if(b)b.innerHTML='';});
 // 在留言框貼上截圖（Ctrl+V）：有圖片就上傳，純文字照常貼上
 document.addEventListener('paste',e=>{
   const box=e.target&&e.target.closest&&e.target.closest('.rq-new');if(!box)return;
@@ -1137,6 +1369,7 @@ document.addEventListener('submit',e=>{if(e.target&&e.target.id==='m-form'){e.pr
 document.addEventListener('change',e=>{
   const t=e.target;
   if(t.dataset&&t.dataset.change==='board-project'){S.boardProject=t.value;render();return;}
+  if(t.id==='g-sel'){S.guideLastQ='';openGuideCh(t.value);return;}
   if(t.id==='f-cat'){const c=$('#f-code');if(c&&c.dataset.auto==='1')c.value=nextCode(t.value);}
 });
 document.addEventListener('input',e=>{
@@ -1144,6 +1377,8 @@ document.addEventListener('input',e=>{
   if(t.id==='f-code')t.dataset.auto='0';
   if(t.id==='f-prog'){const o=$('#f-prog-out');if(o)o.textContent=t.value+'%';}
   if(t.id==='f-tprog'){const o=$('#f-tprog-out');if(o)o.textContent=t.value+'%';}
+  if(t.id==='g-q'){S.guideQ=t.value;S.guideLastQ='';refreshGuideBody();}
+  if(t.id==='f-gmd')guidePreview();
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
