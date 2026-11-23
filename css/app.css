@@ -12,6 +12,7 @@
   --ok:#2E7D4A; --ok-soft:#DDEEDF; --warn:#B4610E; --warn-soft:#F9E7CF;
   --bad:#B3261E; --bad-soft:#F8DEDA; --info:#2C6E80; --info-soft:#DCEBEE;
   --focus:var(--cd-green); --scrim:rgba(19,45,28,.45);
+  --control:var(--cd-green-mid);   /* 輸入框邊框：中綠，米金底 4.17:1（元件邊框要 ≥3:1） */
   --shadow:0 1px 2px rgba(30,22,14,.06),0 8px 24px rgba(30,22,14,.10);
   --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
   --f-head:"Noto Serif TC","Noto Sans TC","PMingLiU",serif;
@@ -26,7 +27,7 @@
     --wh:#8DBB97; --wh-soft:#1E3D28; --it:var(--cd-gold-light); --it-soft:#3A3220; --gn:#C4B99E; --gn-soft:#2A3A2E;
     --ok:#6CC28A; --ok-soft:#16331F; --warn:#F0A848; --warn-soft:#3B2A12;
     --bad:#F07A6E; --bad-soft:#3E1B18; --info:#86C1CF; --info-soft:#15313A;
-    --focus:var(--cd-gold-light); --scrim:rgba(0,0,0,.6);
+    --focus:var(--cd-gold-light); --scrim:rgba(0,0,0,.6); --control:#6FA07D;
     --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.35);
     color-scheme:dark;
   }
@@ -38,7 +39,7 @@
   --wh:#8DBB97; --wh-soft:#1E3D28; --it:var(--cd-gold-light); --it-soft:#3A3220; --gn:#C4B99E; --gn-soft:#2A3A2E;
   --ok:#6CC28A; --ok-soft:#16331F; --warn:#F0A848; --warn-soft:#3B2A12;
   --bad:#F07A6E; --bad-soft:#3E1B18; --info:#86C1CF; --info-soft:#15313A;
-  --focus:var(--cd-gold-light); --scrim:rgba(0,0,0,.6);
+  --focus:var(--cd-gold-light); --scrim:rgba(0,0,0,.6); --control:#6FA07D;
   --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.35);
   color-scheme:dark;
 }
@@ -263,7 +264,7 @@ main.wrap{padding-block:22px 28px;display:grid;gap:18px}
 .tc-move button:hover{color:var(--fg);border-color:var(--muted)}
 .tc-move .nx{margin-left:auto}
 .showall{border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:6px;text-decoration:underline;text-underline-offset:3px}
-select.sel{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;min-height:36px;max-width:100%}
+select.sel{border:1px solid var(--control);background:var(--surface);border-radius:8px;padding:7px 10px;min-height:36px;max-width:100%}
 
 /* ---------- overlays ---------- */
 .ov{position:fixed;inset:0;z-index:50;background:var(--scrim)}
@@ -301,7 +302,7 @@ select.sel{border:1px solid var(--line);background:var(--surface);border-radius:
 .fgrid .full{grid-column:1/-1}
 .fgrid label{display:grid;gap:4px;font-size:12.5px;color:var(--muted);font-weight:500;min-width:0}
 .fgrid label .req{color:var(--bad)}
-.fgrid input,.fgrid select,.fgrid textarea{width:100%;min-width:0;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:14px;min-height:38px}
+.fgrid input,.fgrid select,.fgrid textarea{width:100%;min-width:0;border:1px solid var(--control);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:14px;min-height:38px}
 .fgrid textarea{min-height:76px;resize:vertical}
 .fgrid input[type=range]{padding:0;background:transparent;border:0;accent-color:var(--accent)}
 .fgrid .hint{font-size:12px;color:var(--muted);font-weight:400}
@@ -402,7 +403,7 @@ html.auth-locked .app{display:none}
 .lg-help{font-size:12px;color:var(--muted);margin:0}
 .lg-retry{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 12px;cursor:pointer}
 .lg-mock{display:flex;gap:6px;width:100%;padding:10px;border:1px dashed var(--line);border-radius:8px}
-.lg-mock input{flex:1;min-width:0;height:36px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:var(--surface);color:var(--fg)}
+.lg-mock input{flex:1;min-width:0;height:36px;border:1px solid var(--control);border-radius:6px;padding:0 10px;background:var(--surface);color:var(--fg)}
 .lg-mock button{height:36px;border:0;border-radius:6px;padding:0 12px;background:var(--accent);color:var(--accent-ink);font-weight:700;cursor:pointer}
 .foot .me{display:inline-flex;align-items:center;gap:8px}
 .foot .linkbtn{border:0;background:transparent;color:var(--fg);text-decoration:underline;text-underline-offset:3px;padding:0;font-size:12.5px}
@@ -449,7 +450,7 @@ html.auth-locked .app{display:none}
 /* 任務視窗下方的留言區 */
 .t-rq{display:grid;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
 .t-rq h3{font-size:15px;font-weight:700}
-.rq-new textarea{width:100%;min-height:72px;resize:vertical;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:14px}
+.rq-new textarea{width:100%;min-height:72px;resize:vertical;border:1px solid var(--control);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:14px}
 .rq-line{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .rq-imgs{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
 /* 留言框：加入圖片、貼上截圖 */
