@@ -587,3 +587,12 @@ html.auth-locked .app{display:none}
   body.print-guide .gd-md h3,body.print-guide .gd-md h4{break-after:avoid}
   body.print-guide .gd-tbl tr{break-inside:avoid}
 }
+/* 操作指南的截圖：點一下放大；還沒讀到時先留出位置 */
+.gd-fig{margin:14px 0 6px;text-align:center}
+.gd-img{display:inline-block;max-width:100%;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);overflow:hidden;cursor:zoom-in;vertical-align:top}
+.gd-img img{display:block;width:auto;max-width:100%;height:auto}
+.gd-img img:not([src]){width:min(800px,72vw);aspect-ratio:16/10}
+.gd-fig figcaption{margin-top:6px;font-size:13px;color:var(--muted);text-align:center}
+.gd-fig-err .gd-img{cursor:default}
+.gd-fig-err .gd-img img{aspect-ratio:auto;padding:18px;font-size:13px;color:var(--muted)}
+@media print{body.print-guide .gd-fig{break-inside:avoid}body.print-guide .gd-img{border-color:#bbb}}

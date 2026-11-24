@@ -217,11 +217,12 @@ function loadImgs(){
       .finally(()=>imgLoading.delete(id));
   });
 }
-function openImg(id){
+function openImg(id,title){
   if(!IMGS[id])return;
+  title=title||'demo 截圖';
   M={kind:'img',id,opener:document.activeElement};
   $('#sheet').classList.add('wide');
-  $('#sheet').innerHTML=`<h2 id="m-title">demo 截圖</h2><img class="rq-big" src="${IMGS[id]}" alt="demo 截圖"><div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">關閉</button></div>`;
+  $('#sheet').innerHTML=`<h2 id="m-title">${esc(title)}</h2><img class="rq-big" src="${IMGS[id]}" alt="${esc(title)}"><div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">關閉</button></div>`;
   $('#modal').hidden=false;lockScroll();
 }
 // 留言是針對哪個任務（任務被改名時用目前的名稱）
@@ -1006,7 +1007,8 @@ function setStatus(id,status){
 function toggleTask(id){const t=S.tasks[id];if(t)setStatus(id,t.status==='done'?'todo':'done');}
 /* ================= 操作指南（各系統操作說明書，存在雲端 guides，一章一筆） ================= */
 // 管理員按「匯入說明書」：選從 Claude 文件匯出的 Markdown（.md）或直接貼上，每個「## 標題」是一章，整份取代。
-// Markdown 只支援說明書用到的格式：### / #### 小標、段落、1. 編號清單、- 項目清單、表格、**粗體**、`程式字`、網址自動變連結。
+// Markdown 只支援說明書用到的格式：### / #### 小標、段落、1. 編號清單、- 項目清單、表格、**粗體**、`程式字`、網址自動變連結、
+// 單獨一行的圖片 ![說明](gimg:檔案id)（截圖存在雲端硬碟「操作指南圖片」，登入後用 guideImg 讀，讀過的存在這台裝置的 IndexedDB）。
 const guideList=()=>Object.values(S.guides).filter(g=>g&&g.title).sort((a,b)=>(a.order||0)-(b.order||0));
 function curGuide(list){list=list||guideList();return list.find(g=>g.id===S.guideCh)||list[0]||null;}
 function setGuideCh(id){S.guideCh=id;try{localStorage.setItem(LS_GUIDE,id);}catch(e){}}
@@ -1033,6 +1035,9 @@ function mdInline(s){
   t=t.replace(/https?:\/\/[^\s<>"）」，。、；]+/g,u=>{const tail=(/[.,;:!?)]+$/.exec(u)||[''])[0],url=tail?u.slice(0,-tail.length):u;return `<a href="${url}" target="_blank" rel="noopener">${url}</a>${tail}`;});
   return t.replace(/\u0000(\d+)\u0000/g,(m,i)=>`<code>${codes[+i]}</code>`);
 }
+const GIMG_LINE=/^\s*!\[([^\]]*)\]\(gimg:([A-Za-z0-9_\-]{10,80})\)\s*$/;
+// 截圖：src 等畫面出來後才補（loadGuideImgs），快取的 HTML 不含圖片資料
+const gimgFig=(id,alt)=>`<figure class="gd-fig"><button type="button" class="gd-img" data-act="req-img" data-id="${esc(id)}" data-title="${esc(alt||'操作畫面')}" aria-label="放大圖片${alt?'：'+esc(alt):''}"><img data-gimg="${esc(id)}" alt="${esc(alt||'操作畫面')}"></button>${alt?`<figcaption>${mdInline(alt)}</figcaption>`:''}</figure>`;
 const MD_CACHE=new Map();
 function mdBlocks(md,pre){
   const key=pre+'\n'+md;if(MD_CACHE.has(key))return MD_CACHE.get(key);
@@ -1043,6 +1048,7 @@ function mdBlocks(md,pre){
   while(i<L.length){
     const l=L[i];let m;
     if(!l.trim()){i++;continue;}
+    if((m=GIMG_LINE.exec(l))){h+=gimgFig(m[2],m[1]);i++;continue;}
     if((m=HD.exec(l))){sec++;const lv=m[1].length<=3?3:4;h+=`<h${lv} id="gs-${pre}-${sec}" tabindex="-1">${mdInline(m[2])}</h${lv}>`;i++;continue;}
     if(isRow(l)&&i+1<L.length&&isSep(L[i+1])){
       const head=cells(l),rows=[];i+=2;
@@ -1058,7 +1064,7 @@ function mdBlocks(md,pre){
       continue;
     }
     const buf=[];
-    while(i<L.length&&L[i].trim()&&!HD.test(L[i])&&!OL.test(L[i])&&!UL.test(L[i])&&!(isRow(L[i])&&i+1<L.length&&isSep(L[i+1]))){buf.push(L[i].trim());i++;}
+    while(i<L.length&&L[i].trim()&&!GIMG_LINE.test(L[i])&&!HD.test(L[i])&&!OL.test(L[i])&&!UL.test(L[i])&&!(isRow(L[i])&&i+1<L.length&&isSep(L[i+1]))){buf.push(L[i].trim());i++;}
     if(!buf.length){buf.push(l.trim());i++;}
     const txt=buf.join(' ');
     const cls=/^注意[：:]/.test(txt)?' class="gd-note"':/^\*\*[^*]+\*\*$/.test(txt)?' class="gd-sub"':'';
@@ -1068,7 +1074,7 @@ function mdBlocks(md,pre){
   MD_CACHE.set(key,h);return h;
 }
 // 搜尋：以「小標」為單位；第 0 段是章首（第一個小標之前）
-const plainMd=s=>String(s).replace(/^\s*(\d+[.)]|[-*+])\s+/,'').replace(/^\s*\|?\s*:?-{3,}.*$/,'').replace(/\|/g,' ').replace(/\*\*|`/g,'').replace(MD_ESC,'$1').trim();
+const plainMd=s=>String(s).replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/^\s*(\d+[.)]|[-*+])\s+/,'').replace(/^\s*\|?\s*:?-{3,}.*$/,'').replace(/\|/g,' ').replace(/\*\*|`/g,'').replace(MD_ESC,'$1').trim();
 const SEC_CACHE=new Map();
 function guideSections(g){
   const key=g.id+'\n'+g.md;if(SEC_CACHE.has(key))return SEC_CACHE.get(key);
@@ -1133,12 +1139,53 @@ function vGuide(){
   const sel=`<label class="gd-sel no-print"><span>章節</span><select class="sel" id="g-sel">${list.map((x,i)=>`<option value="${esc(x.id)}"${x.id===g.id?' selected':''}>${i+1}. ${esc(x.title)}</option>`).join('')}</select></label>`;
   return head+statusBanner()+`<div class="gd">${toc}<div class="gd-main">${sel}<div id="gd-body">${q?guideResultsHTML(q):guideChapterHTML(g,list)}</div></div></div><div class="gd-print-all"></div>`;
 }
+// 截圖讀取：畫面捲到附近才讀，一次最多 3 張；讀過的存在 IndexedDB（wi-guide-img），下次直接用
+const gimgP={};let gimgIO=null,gimgBusy=0;const gimgWait=[];
+function gimgDb(){
+  if(gimgDb.p)return gimgDb.p;
+  gimgDb.p=new Promise(res=>{try{const r=indexedDB.open('wi-guide-img',1);r.onupgradeneeded=()=>r.result.createObjectStore('img');r.onsuccess=()=>res(r.result);r.onerror=()=>res(null);}catch(e){res(null);}});
+  return gimgDb.p;
+}
+async function gimgGet(id){const db=await gimgDb();if(!db)return null;return new Promise(res=>{try{const q=db.transaction('img').objectStore('img').get(id);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null);}catch(e){res(null);}});}
+async function gimgPut(id,v){const db=await gimgDb();if(!db)return;try{db.transaction('img','readwrite').objectStore('img').put(v,id);}catch(e){}}
+const gimgEls=id=>document.querySelectorAll(`img[data-gimg="${CSS.escape(id)}"]`);
+function fetchGimg(id){
+  if(IMGS[id])return Promise.resolve(IMGS[id]);
+  if(gimgP[id])return gimgP[id];
+  return gimgP[id]=(async()=>{
+    let v=await gimgGet(id);
+    if(!v){
+      if(!AU||!AU.user())throw new Error('尚未登入');
+      if(gimgBusy>=3)await new Promise(r=>gimgWait.push(r));
+      gimgBusy++;
+      try{const j=await AU.api('guideImg',{id});v='data:'+j.mime+';base64,'+j.data;gimgPut(id,v);}
+      finally{gimgBusy--;const n=gimgWait.shift();if(n)n();}
+    }
+    IMGS[id]=v;gimgEls(id).forEach(x=>{x.src=v;});return v;
+  })().catch(e=>{delete gimgP[id];gimgEls(id).forEach(x=>{x.alt='圖片讀取失敗，請按左上角同步後重新打開這一章';x.closest('.gd-fig')&&x.closest('.gd-fig').classList.add('gd-fig-err');});throw e;});
+}
+function loadGuideImgs(){
+  const els=[...document.querySelectorAll('img[data-gimg]:not([src])')];
+  if(gimgIO)gimgIO.disconnect();
+  if(!els.length)return;
+  if(!('IntersectionObserver' in window)){els.forEach(el=>fetchGimg(el.dataset.gimg).catch(()=>{}));return;}
+  gimgIO=new IntersectionObserver(es=>{for(const e of es)if(e.isIntersecting){gimgIO.unobserve(e.target);fetchGimg(e.target.dataset.gimg).catch(()=>{});}},{rootMargin:'800px 0px'});
+  els.forEach(el=>{const id=el.dataset.gimg;if(IMGS[id])el.src=IMGS[id];else gimgIO.observe(el);});
+}
+// 列印前把要印的截圖都讀好
+async function loadAllGimg(ids){
+  const need=[...new Set(ids)].filter(id=>!IMGS[id]);if(!need.length)return;
+  let done=0;toast(`正在準備圖片 0／${need.length}…`);
+  await Promise.all(need.map(id=>fetchGimg(id).catch(()=>{}).then(()=>{done++;toast(`正在準備圖片 ${done}／${need.length}…`);})));
+}
+const gimgIds=md=>[...String(md||'').matchAll(/gimg:([A-Za-z0-9_\-]{10,80})/g)].map(m=>m[1]);
 // 打字搜尋時只換內容區，搜尋框不重畫（游標不會跳）
 function refreshGuideBody(){
   const b=$('#gd-body');if(!b)return;
   const list=guideList(),q=S.guideQ.trim(),g=curGuide(list);
   b.innerHTML=q?guideResultsHTML(q):g?guideChapterHTML(g,list):'';
   document.querySelectorAll('.gd-toc [data-act=g-ch]').forEach(x=>{if(!q&&g&&x.dataset.id===g.id)x.setAttribute('aria-current','true');else x.removeAttribute('aria-current');});
+  loadGuideImgs();
 }
 function scrollToEl(el){const top=$('.top'),off=(top?top.getBoundingClientRect().height:0)+12;window.scrollTo({top:Math.max(0,el.getBoundingClientRect().top+window.scrollY-off)});}
 function openGuideCh(id,sec){
@@ -1151,11 +1198,14 @@ function openGuideCh(id,sec){
   if(el){scrollToEl(el);if(sec){el.classList.add('gd-flash');setTimeout(()=>el.classList.remove('gd-flash'),1800);}}
   if(!fromToc){const f=sec?el:$('.gd-h');if(f)f.focus({preventScroll:true});}
 }
-function printGuide(all){
+async function printGuide(all){
   if(!all&&S.guideQ.trim()){S.guideQ='';render();}
+  const list=guideList(),cur=curGuide(list);
+  await loadAllGimg(all?list.flatMap(x=>gimgIds(x.md)):cur?gimgIds(cur.md):[]);
   document.body.classList.add('print-guide');document.body.classList.toggle('print-guide-all',all);
-  const b=$('.gd-print-all');if(b)b.innerHTML=all?guideList().map(x=>guideChapterHTML(x,null)).join(''):'';
-  setTimeout(()=>window.print(),60);
+  const b=$('.gd-print-all');if(b)b.innerHTML=all?list.map(x=>guideChapterHTML(x,null)).join(''):'';
+  document.querySelectorAll('img[data-gimg]').forEach(x=>{if(IMGS[x.dataset.gimg])x.src=IMGS[x.dataset.gimg];});
+  setTimeout(()=>window.print(),80);
 }
 // 入口頁卡片的「操作說明」：用系統名稱對到章名（去掉空白、括號、App／系統／管理等字）
 const gnorm=s=>String(s||'').replace(/（[^）]*）|\([^)]*\)/g,'').replace(/\s+/g,'').replace(/app|系統|管理|網頁版/gi,'').toLowerCase();
@@ -1257,6 +1307,7 @@ function render(){
   const lw2=main.querySelector('.lanes-wrap');if(lw2)lw2.scrollLeft=sl;
   if(fk){for(const el of main.querySelectorAll('[data-act]'))if(focusKey(el)===fk){el.focus({preventScroll:true});if(el.id==='g-q'){const n=el.value.length;try{el.setSelectionRange(n,n);}catch(e){}}break;}}
   const top=$('.top');if(top)document.documentElement.style.setProperty('--top-h',top.offsetHeight+'px');
+  if(S.view==='guide')loadGuideImgs();
   renderSync();renderFoot();renderAlert();
   // 任務視窗開著時，留言有新回覆就更新（留言框不動，打到一半的字不會不見）
   if(M&&M.kind==='task'&&M.id){const l=$('#t-rq-list');if(l){l.innerHTML=taskReqList(M.id);loadImgs();}}
@@ -1341,7 +1392,7 @@ document.addEventListener('click',e=>{
     case 'img-remove':PEND[d.key]=pendOf(d.key).filter(im=>im.id!==d.id);refreshPend(d.key);break;
     case 'req-cancel':arm(a,'再按一次確認取消',()=>setReq(d.id,{status:'closed'},'已取消這則留言'));break;
     case 'req-revise':openRevise(d.id);break;
-    case 'req-img':openImg(d.id);break;
+    case 'req-img':openImg(d.id,d.title);break;
     case 'import':{const f=$('#importFile');f.value='';f.click();break;}
     case 'g-ch':S.guideLastQ='';openGuideCh(d.id);break;
     case 'g-open':S.guideLastQ='';openGuideCh(d.id);break;
