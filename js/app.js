@@ -8,6 +8,9 @@
  *               start, end (YYYY-MM-DD), owner, folder, url (系統網址，入口頁用), desc, progress (0-100，沒有任務時才用), createdAt, updatedAt, updatedBy }
  *             沒填 url 時，用說明裡的「App：網址」或「入口網址：網址」。
  *             vendor＝委外工程師負責：留言由 Claude 整理成給工程師的討論重點（brief），不直接修改；有「工程師討論清單」可列印／複製。
+ *             委外事項的狀態：open 待整理 → review 已整理，待你確認 → approved 待跟工程師討論 → dev 工程師處理中 → accept 待驗收 → done 已驗收結案。
+ *             驗收清單＝討論重點裡「【驗收標準】」的每一條（沒有的話用「【希望的結果】」）；勾選結果存在 acceptChecks，驗收通過記 acceptedAt／acceptedBy，
+ *             驗收不通過要寫原因（存成一則回覆），退回 dev 工程師處理中。
  *   links     入口頁的常用連結（不是專案的系統，例如夥伴交接看板）{ id, title, url, category: wh|it|gn, note }
  *   guides    「操作指南」頁的各系統操作說明書，一章一筆 { id, order, title, md (Markdown), docTitle, importedAt, importedBy }
  *             管理員按「匯入說明書」，選從 Claude 文件匯出的 Markdown（每個「## 標題」是一章），整份取代。存在雲端，登入才看得到。
@@ -229,7 +232,7 @@ function openImg(id,title){
 const reqTask=r=>r.taskId?((S.tasks[r.taskId]||{}).title||r.taskTitle||'（任務已刪除）'):'';
 const taskReqs=tid=>E(S.requests).filter(x=>x[1].taskId===tid&&x[1].status!=='closed'&&x[1].status!=='done').sort(byNewest);
 // 委外工程師負責的專案（vendor）：留言由 Claude 整理成「給工程師的討論重點」，不直接修改
-const VREQ={open:['待整理','info'],review:['已整理，待你確認','warn'],approved:['待跟工程師討論','ok'],done:['已討論','ok'],closed:['已取消','']};
+const VREQ={open:['待整理','info'],review:['已整理，待你確認','warn'],approved:['待跟工程師討論','ok'],dev:['工程師處理中','info'],accept:['待驗收','warn'],done:['已驗收，結案','ok'],closed:['已取消','']};
 const isVendorReq=r=>!!(r.vendor||(P(r.projectId)||{}).vendor);
 const reqLabel=r=>(isVendorReq(r)?VREQ:REQ)[r.status]||REQ.open;
 const imgsHTML=list=>list&&list.length?`<div class="rq-imgs">${list.map(imgTag).join('')}</div>`:'';
@@ -243,12 +246,13 @@ function reqHTML([id,r],showTask){
   if(r.status==='review')acts=`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">${vend?'確認，列入討論清單':'核准上線'}</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`;
   else if(r.status==='open')acts=`<button type="button" class="btn ghost" data-act="req-cancel" data-id="${esc(id)}">取消留言</button>`;
   else if(vend&&r.status==='approved')acts=`<button type="button" class="btn primary" data-act="req-discussed" data-id="${esc(id)}">已跟工程師討論</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`;
+  else if(vend&&(r.status==='dev'||r.status==='accept'))acts=accActs(id,r);
   // 還沒有 Claude 的回覆：顯示等待中（轉送收到後會先回覆「已交給 Claude 的…處理」）
   const rs=r.replies||[],lastBy=rs.length?rs[rs.length-1].by:'';
   let wait='';
   if(r.status==='open'&&lastBy!=='Claude')wait=vend?'等待 Claude 整理成給工程師的討論重點…（通常幾分鐘內）':'等待 Claude 收到…（通常 1 分鐘內會在這裡回覆）';
   else if(r.status==='approved'&&!vend&&lastBy!=='Claude')wait='已核准，等待 Claude 收到後上線…';
-  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span>${tk}<span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div>${r.text?`<p class="rq-t">${esc(r.text)}</p>`:''}${imgsHTML(r.images)}${brief}${replies}${wait?`<p class="muted rq-wait">${wait}</p>`:''}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
+  return `<div class="rq"><div class="rq-h"><span class="pill ${st[1]}">${st[0]}</span>${tk}<span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div>${r.text?`<p class="rq-t">${esc(r.text)}</p>`:''}${imgsHTML(r.images)}${brief}${vend?acceptHTML(id,r):''}${replies}${wait?`<p class="muted rq-wait">${wait}</p>`:''}${acts?`<div class="rq-a w-only">${acts}</div>`:''}</div>`;
 }
 
 /* ---------- Demo 做好、等你確認（留言狀態 review）：進度條亮紅色提醒 ---------- */
@@ -801,6 +805,7 @@ async function submitForm(form){
   if(M.kind==='user')return submitUser(form);
   if(M.kind==='import')return doImport();
   if(M.kind==='reqrevise')return submitRevise(form);
+  if(M.kind==='reqreject')return submitReject();
   if(M.kind==='guide')return doGuideImport();
   if(!S.canWrite)return;
   const f=new FormData(form);const v=k=>String(f.get(k)||'').trim();
@@ -875,6 +880,64 @@ function setReq(id,patch,msg){
   put('requests',id,Object.assign({},r,patch,{updatedAt:new Date().toISOString()}));
   if(msg)toast(msg);
 }
+/* ---------- 委外事項的驗收：工程師做好 → 照驗收清單逐項確認 → 驗收通過（結案）或不通過（退回工程師） ---------- */
+// 驗收清單＝討論重點裡「【驗收標準】」的每一條；舊的重點沒有這段時，用「【希望的結果】」
+function acceptItems(r){
+  const b=String(r.brief||''),sec=name=>{const m=new RegExp('【'+name+'】([\\s\\S]*?)(?=\\n\\s*【|$)').exec(b);return m?m[1]:'';};
+  const pick=src=>src.split('\n').map(l=>/^\s*(?:\d+\s*[.、．)）]|[-・•])\s*(.+)$/.exec(l)).filter(Boolean).map(m=>m[1].trim());
+  const a=pick(sec('驗收標準'));return a.length?a:pick(sec('希望的結果'));
+}
+const hasAcceptStd=r=>/【驗收標準】/.test(String(r.brief||''));
+function acceptHTML(id,r){
+  if(r.status!=='accept'&&r.status!=='done')return '';
+  const items=acceptItems(r),ck=r.acceptChecks||[],edit=r.status==='accept';
+  const ok=items.filter((_,i)=>ck[i]).length;
+  const rows=items.length?items.map((t,i)=>`<li><label class="acc-row"><input type="checkbox" data-act="acc-check" data-id="${esc(id)}" data-i="${i}"${ck[i]?' checked':''}${edit&&S.canWrite?'':' disabled'}><span>${esc(t)}</span></label></li>`).join(''):'<li class="muted">討論重點裡沒有列出驗收標準，請照「希望的結果」逐項確認。</li>';
+  const head=r.status==='done'?`驗收通過<span class="muted"> · ${esc(r.acceptedBy||'')} ${whenTxt(r.acceptedAt)}（${ok}／${items.length} 項符合）</span>`:`驗收清單 <span class="muted">${ok}／${items.length} 項符合${hasAcceptStd(r)?'':'（取自「希望的結果」）'}</span>`;
+  return `<div class="acc${r.status==='done'?' acc-done':''}"><div class="acc-h"><b>${head}</b></div>${edit?'<p class="muted acc-tip">到系統上實際操作，符合的打勾；全部符合才能按「驗收通過」。</p>':''}<ol class="acc-list">${rows}</ol></div>`;
+}
+function accActs(id,r){
+  if(r.status==='dev')return `<button type="button" class="btn primary" data-act="req-dev-done" data-id="${esc(id)}">工程師已完成，開始驗收</button>`;
+  if(r.status==='accept')return `<button type="button" class="btn primary" data-act="req-accept" data-id="${esc(id)}">驗收通過</button><button type="button" class="btn" data-act="req-reject" data-id="${esc(id)}">驗收不通過</button>`;
+  return '';
+}
+function toggleAccept(id,i,on){
+  const r=S.requests[id];if(!r||r.status!=='accept')return;
+  const ck=(r.acceptChecks||[]).slice();ck[i]=!!on;
+  for(let k=0;k<ck.length;k++)if(ck[k]==null)ck[k]=false;
+  setReq(id,{acceptChecks:ck});
+}
+function acceptPass(btn,id){
+  const r=S.requests[id];if(!r)return;
+  const items=acceptItems(r),ck=r.acceptChecks||[],left=items.filter((_,i)=>!ck[i]).length;
+  if(left){toast(`還有 ${left} 項沒勾。全部確認符合才能驗收通過；有不符合的請按「驗收不通過」。`);return;}
+  arm(btn,'再按一次確認驗收通過',()=>setReq(id,{status:'done',acceptedAt:new Date().toISOString(),acceptedBy:myName()},'驗收通過，這項已結案'));
+}
+function openReject(id){
+  const r=S.requests[id];if(!r)return;
+  M={kind:'reqreject',id,opener:document.activeElement};
+  const items=acceptItems(r),ck=r.acceptChecks||[],bad=items.filter((_,i)=>!ck[i]);
+  $('#sheet').innerHTML=`<form id="m-form" novalidate>
+    <h2 id="m-title">驗收不通過</h2>
+    <p class="muted" style="margin-bottom:10px">寫清楚哪一條不符合、你怎麼操作、看到什麼（最好附截圖）。送出後退回「工程師處理中」，原因會記在留言裡，方便轉給工程師。</p>
+    ${bad.length?`<p style="margin-bottom:6px">還沒勾的項目：</p><ul class="acc-bad">${bad.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:''}
+    <p style="font-weight:500;margin:8px 0 6px">不通過的原因 <span class="req">*</span></p>
+    ${composerHTML('j:'+id,'f-title','例如：第 2 條，入貨單拍照後金額沒有自動核對，畫面停在…','')}
+    <p class="ferr" id="ferr" role="alert"></p>
+    <div class="m-foot"><span class="sp"></span><button type="button" class="btn" data-act="close-modal">取消</button><button type="submit" class="btn danger" id="f-save">退回工程師</button></div>
+  </form>`;
+  $('#modal').hidden=false;lockScroll();
+  setTimeout(()=>{const f=$('#f-title');if(f)f.focus();},0);
+}
+function submitReject(){
+  const r=S.requests[M.id],ta=$('#f-title'),t=String((ta&&ta.value)||'').trim(),k='j:'+M.id;
+  if(!t){$('#ferr').textContent='請寫不通過的原因。';return;}
+  if(!r){closeModal();return;}
+  const images=takePend(k);if(!images)return;
+  const reply={id:uid('c'),by:myName(),text:'驗收不通過：'+t,at:new Date().toISOString(),kind:'reject'};if(images.length)reply.images=images;
+  setReq(M.id,{replies:(r.replies||[]).concat([reply]),status:'dev',acceptChecks:[]},'已退回「工程師處理中」，原因記在留言裡');
+  closeModal();
+}
 function openRevise(id){
   if(!S.requests[id])return;
   M={kind:'reqrevise',id,opener:document.activeElement};
@@ -902,12 +965,12 @@ function submitRevise(form){
 }
 
 /* ---------- 工程師討論清單（委外專案）：依任務（頁面）整理，可以列印或複製 ---------- */
-const VL_FILTER={open:['還沒討論',s=>s!=='done'],done:['已討論',s=>s==='done'],all:['全部',()=>true]};
+const VL_FILTER={open:['還沒討論',s=>s==='open'||s==='review'||s==='approved'],dev:['工程師處理中',s=>s==='dev'],accept:['待驗收',s=>s==='accept'],done:['已結案',s=>s==='done'],all:['全部',()=>true]};
 const urlIn=s=>{const m=/https?:\/\/[^\s<>"']+/.exec(s||'');return m?m[0]:'';};
 function vlGroups(pid){
   const f=(VL_FILTER[S.vlFilter]||VL_FILTER.open)[1];
   const reqs=E(S.requests).filter(([,r])=>r.projectId===pid&&r.status!=='closed'&&f(r.status));
-  const order={approved:0,review:1,open:2,done:3};
+  const order={accept:0,review:1,approved:2,open:3,dev:4,done:5};
   const groups=[];
   const tasks=E(S.tasks).filter(([,t])=>t.projectId===pid).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
   for(const [tid,t] of tasks){
@@ -920,12 +983,13 @@ function vlGroups(pid){
 }
 function vlBody(pid){
   const gs=vlGroups(pid);
-  if(!gs.length)return `<p class="empty">${S.vlFilter==='done'?'還沒有已討論的事項。':'目前沒有要跟工程師討論的事項。在任務視窗下方留言，Claude 整理後會出現在這裡。'}</p>`;
+  if(!gs.length)return `<p class="empty">${S.vlFilter==='open'?'目前沒有要跟工程師討論的事項。在任務視窗下方留言，Claude 整理後會出現在這裡。':`目前沒有「${(VL_FILTER[S.vlFilter]||VL_FILTER.all)[0]}」的事項。`}</p>`;
   let n=0;
   return gs.map(g=>`<section class="vl-grp"><h3>${esc(g.title)}${g.pct!==null?`<span class="muted">執行進度 ${g.pct}%</span>`:''}</h3>${g.url?`<p class="vl-url">${esc(g.url)}</p>`:''}
     ${g.items.map(([id,r])=>{n++;const st=reqLabel(r);
       return `<article class="vl-item"><div class="vl-h"><b>${n}.</b><span class="pill ${st[1]}">${st[0]}</span><span class="muted">${esc(r.createdBy||'')} · ${whenTxt(r.createdAt)}</span></div>
         ${r.brief?`<div class="vl-brief">${esc(r.brief)}</div><p class="vl-orig"><span class="muted">原始留言：</span>${esc(r.text||'（只有圖片）')}</p>`:`<div class="vl-brief vl-raw"><span class="muted">（Claude 還沒整理）</span>\n${esc(r.text||'（只有圖片）')}</div>`}
+        ${acceptHTML(id,r)}${(r.replies||[]).filter(c=>c.kind==='reject').map(c=>`<p class="vl-reject"><b>${esc(c.by||'')}</b> <span class="muted">${whenTxt(c.at)}</span> ${esc(c.text||'')}</p>`).join('')}
         ${imgsHTML((r.images||[]).concat(...(r.replies||[]).filter(c=>c.by!=='Claude').map(c=>c.images||[])))}
         ${vlActs(id,r)}
       </article>`;}).join('')}</section>`).join('');
@@ -936,6 +1000,7 @@ function vlActs(id,r){
   if(r.status==='review')a=`<button type="button" class="btn primary" data-act="req-approve" data-id="${esc(id)}">確認，列入討論清單</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">還要修改</button>`;
   else if(r.status==='approved')a=`<button type="button" class="btn primary" data-act="req-discussed" data-id="${esc(id)}">已跟工程師討論</button><button type="button" class="btn" data-act="req-revise" data-id="${esc(id)}">補充</button>`;
   else if(r.status==='open')a=`<span class="muted" style="font-size:12.5px">等待 Claude 整理…</span>`;
+  else if(r.status==='dev'||r.status==='accept')a=accActs(id,r);
   const open=r.taskId&&S.tasks[r.taskId]?`<button type="button" class="linkbtn" data-act="edit" data-kind="task" data-id="${esc(r.taskId)}">打開留言</button>`:`<button type="button" class="linkbtn" data-act="open-project" data-id="${esc(r.projectId)}">打開專案</button>`;
   return `<div class="vl-acts no-print w-only">${a}<span class="sp"></span>${open}</div>`;
 }
@@ -952,10 +1017,12 @@ function vVendor(){
   const sum=`<section class="vv-sum">
     <div class="kpi${n('review')?' alert':''}"><span class="kl">已整理，待你確認</span><b class="kn">${n('review')}</b></div>
     <div class="kpi"><span class="kl">待跟工程師討論</span><b class="kn">${n('approved')}</b></div>
+    <div class="kpi"><span class="kl">工程師處理中</span><b class="kn">${n('dev')}</b></div>
+    <div class="kpi${n('accept')?' alert':''}"><span class="kl">待驗收</span><b class="kn">${n('accept')}</b></div>
+    <div class="kpi"><span class="kl">已驗收，結案</span><b class="kn">${n('done')}</b></div>
     <div class="kpi"><span class="kl">Claude 整理中</span><b class="kn">${n('open')}</b></div>
-    <div class="kpi"><span class="kl">已討論</span><b class="kn">${n('done')}</b></div>
   </section>
-  <p class="muted vv-note no-print">怎麼用：在專案的任務視窗下方留言（可以貼截圖）→ Claude 整理成討論重點 →「確認，列入討論清單」→ 跟工程師討論完按「已跟工程師討論」。資料存在整合中心的雲端資料（每天自動備份），圖片存在雲端硬碟「留言截圖」。</p>`;
+  <p class="muted vv-note no-print">怎麼用：在專案的任務視窗下方留言（可以貼截圖）→ Claude 整理成討論重點 →「確認，列入討論清單」→ 跟工程師討論完按「已跟工程師討論」→ 工程師做好後按「工程師已完成，開始驗收」→ 照驗收清單到系統上逐項確認，全部符合按「驗收通過」（結案），有不符合的按「驗收不通過」寫原因（退回工程師）。資料存在整合中心的雲端資料（每天自動備份），圖片存在雲端硬碟「留言截圖」。</p>`;
   const body=vps.map(([pid,p])=>{const u=projUrl(p);
     return `<section class="panel vv-proj"><div class="ph"><h3>${codeTag(p)} ${esc(p.name)}</h3>${u?`<a class="btn ghost no-print" href="${esc(u)}" target="_blank" rel="noopener">開啟系統 ↗</a>`:''}</div><div class="vv-body">${vlBody(pid)}</div></section>`;}).join('');
   return head+statusBanner()+sum+body;
@@ -968,6 +1035,8 @@ function vlText(pid){
     for(const [,r] of g.items){
       n++;const imgs=(r.images||[]).length+(r.replies||[]).filter(c=>c.by!=='Claude').reduce((s,c)=>s+(c.images||[]).length,0);
       lines.push(`${n}.〔${reqLabel(r)[0]}〕`,r.brief||r.text||'（只有圖片）');
+      if(r.status==='accept'||r.status==='done'){const it=acceptItems(r),ck=r.acceptChecks||[];lines.push(r.status==='done'?`驗收通過（${r.acceptedBy||''} ${whenTxt(r.acceptedAt)}）`:'驗收中：');it.forEach((t,i)=>lines.push(`  ${ck[i]?'☑':'☐'} ${t}`));}
+      (r.replies||[]).filter(c=>c.kind==='reject').forEach(c=>lines.push(`  ${c.text}（${c.by||''} ${whenTxt(c.at)}）`));
       if(imgs)lines.push(`（附圖 ${imgs} 張，在倉儲 IT 整合中心看）`);
     }
   }
@@ -1334,7 +1403,7 @@ function renderAlert(){
   // 「工程師討論」分頁：有委外專案才顯示；數字＝待你確認＋待跟工程師討論
   const tab=document.querySelector('.tabs [data-view=vendor]'),vb=$('#nb-vendor');
   if(tab)tab.hidden=!vendorProjects().length;
-  if(vb){const m=vendorReqs().filter(x=>x[1].status==='review'||x[1].status==='approved').length;vb.textContent=m;vb.hidden=!m;vb.setAttribute('aria-label',`${m} 件要處理`);}
+  if(vb){const m=vendorReqs().filter(x=>x[1].status==='review'||x[1].status==='approved'||x[1].status==='accept').length;vb.textContent=m;vb.hidden=!m;vb.setAttribute('aria-label',`${m} 件要處理`);}
 }
 function renderFoot(){
   const n=c=>Object.keys(S[c]).length;
@@ -1382,7 +1451,11 @@ document.addEventListener('click',e=>{
     case 'req-send':sendReq(d.id);break;
     case 'req-send-task':{const t=S.tasks[d.id];if(t)sendReq(t.projectId,d.id);else toast('這個任務已被刪除');break;}
     case 'req-approve':{const r=S.requests[d.id];setReq(d.id,{status:'approved'},r&&isVendorReq(r)?'已列入「工程師討論清單」':'已核准，Claude 會直接收到並上線');break;}
-    case 'req-discussed':setReq(d.id,{status:'done'},'已標記為「已跟工程師討論」');break;
+    case 'req-discussed':setReq(d.id,{status:'dev'},'已標記為「已跟工程師討論」，改成「工程師處理中」');break;
+    case 'req-dev-done':setReq(d.id,{status:'accept',acceptChecks:[]},'開始驗收：到系統上照驗收清單逐項確認');break;
+    case 'acc-check':toggleAccept(d.id,+d.i,a.checked);break;
+    case 'req-accept':acceptPass(a,d.id);break;
+    case 'req-reject':openReject(d.id);break;
     case 'req-done-toggle':if(SHOW_DONE.has(d.key))SHOW_DONE.delete(d.key);else SHOW_DONE.add(d.key);render();break;
     case 'vendor-list':openVendorList(d.id);break;
     case 'vl-filter':S.vlFilter=d.status;if(M&&M.kind==='vlist')vlRefresh();else render();break;
